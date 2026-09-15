@@ -1,18 +1,26 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import React, { Suspense, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { FileSearch, RefreshCw, Upload } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
 import { Header } from "@/components/Header";
-import { FavoritesView, type FavoriteItem } from "@/components/FavoritesView";
+import { FavoritesView } from "@/components/FavoritesView";
 import { loadPodcastHistory, upsertPodcastHistoryItem } from "@/lib/podcast-history";
-import type { StoredPodcast } from "@/types/podcast";
+import { loadPodcastFavorites } from "@/lib/podcast-favorites";
+import {
+  DEFAULT_SOURCE_LANGUAGE,
+  loadSourceLanguage,
+  saveSourceLanguage,
+} from "@/lib/podcast-settings";
+import { apiUrl } from "@/lib/api";
+import type { FavoriteSentence, SourceLanguage, StoredPodcast } from "@/types/podcast";
 
 type JobResponse = {
   job_id: string;
   status: string;
   filename: string;
+  source_language?: SourceLanguage;
 };
 
 type RSSItem = {
@@ -22,11 +30,15 @@ type RSSItem = {
   description?: string;
 };
 
-export default function Home() {
+function HomeContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [view, setView] = useState<"import" | "favorites">("import");
   const [historyItems, setHistoryItems] = useState<StoredPodcast[]>([]);
+  const [favoriteItems, setFavoriteItems] = useState<FavoriteSentence[]>([]);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  // 初始值用常量而非直接读 localStorage，避免服务端渲染与客户端不一致（hydration mismatch）
+  const [sourceLanguage, setSourceLanguage] = useState<SourceLanguage>(DEFAULT_SOURCE_LANGUAGE);
   const [isProcessing, setIsProcessing] = useState(false);
   const [rssInput, setRssInput] = useState("");
   const [isSubmittingRss, setIsSubmittingRss] = useState(false);
@@ -37,7 +49,26 @@ export default function Home() {
 
   useEffect(() => {
     setHistoryItems(loadPodcastHistory());
+    setFavoriteItems(loadPodcastFavorites());
+    setSourceLanguage(loadSourceLanguage());
   }, []);
+
+  // 语种选择持久化：按选中语言记住，下次打开沿用（首次进入仍是 DEFAULT_SOURCE_LANGUAGE）
+  const handleSourceLanguageChange = (value: SourceLanguage) => {
+    setSourceLanguage(value);
+    saveSourceLanguage(value);
+  };
+
+  useEffect(() => {
+    const nextView = searchParams.get("view");
+    if (nextView === "favorites") {
+      setFavoriteItems(loadPodcastFavorites());
+      setView("favorites");
+      return;
+    }
+
+    setView("import");
+  }, [searchParams]);
 
   const handleUploadClick = () => {
     fileInputRef.current?.click();
@@ -67,10 +98,11 @@ export default function Home() {
 
     const formData = new FormData();
     formData.append("file", file);
+    formData.append("source_language", sourceLanguage);
 
     try {
       console.log("[upload] request starting", "POST /process-podcast");
-      const response = await fetch("http://localhost:8000/process-podcast", {
+      const response = await fetch(apiUrl("/process-podcast"), {
         method: "POST",
         body: formData,
       });
@@ -92,6 +124,7 @@ export default function Home() {
         progress: 0,
         translatedCount: 0,
         totalSegments: 0,
+        sourceLanguage: data.source_language || sourceLanguage,
         errorMessage: null,
         segments: [],
       };
@@ -104,8 +137,8 @@ export default function Home() {
     } catch (error) {
       console.error("Error:", error);
       setIsProcessing(false);
-      setErrorMessage("处理失败，请检查后端服务是否开启。");
-      alert("处理失败，请检查后端服务是否开启。");
+      setErrorMessage("处理失败，请检查后端服务是否开启�?");
+      alert("处理失败，请检查后端服务是否开启�?");
     }
   };
 
@@ -117,7 +150,7 @@ export default function Home() {
     });
     if (!value) {
       console.log("[rss] blocked: empty input");
-      setErrorMessage("请先输入一个 RSS 链接。");
+      setErrorMessage("请先输入一�? RSS 链接�?");
       return;
     }
 
@@ -125,7 +158,7 @@ export default function Home() {
       new URL(value);
     } catch {
       console.log("[rss] blocked: invalid url", value);
-      setErrorMessage("RSS 链接格式不正确，请检查后重试。");
+      setErrorMessage("RSS 链接格式不正确，请检查后重试�?");
       return;
     }
 
@@ -136,7 +169,7 @@ export default function Home() {
 
     try {
       console.log("[rss] request starting", "POST /parse-rss");
-      const response = await fetch("http://localhost:8000/parse-rss", {
+      const response = await fetch(apiUrl("/parse-rss"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -159,7 +192,7 @@ export default function Home() {
         firstItem: (data.items || [])[0] || null,
       });
       if ((data.items || []).length === 0) {
-        setErrorMessage("这个 RSS 没有解析出可用的音频条目。");
+        setErrorMessage("这个 RSS 没有解析出可用的音频条目�?");
       }
     } catch (error) {
       console.error("[rss] parse error", error);
@@ -179,7 +212,7 @@ export default function Home() {
 
     try {
       console.log("[rss] request starting", "POST /process-rss-item");
-      const response = await fetch("http://localhost:8000/process-rss-item", {
+      const response = await fetch(apiUrl("/process-rss-item"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -189,6 +222,7 @@ export default function Home() {
           audio_url: item.audio_url,
           title: item.title,
           published_at: item.published_at || null,
+          source_language: sourceLanguage,
         }),
       });
 
@@ -211,6 +245,7 @@ export default function Home() {
         progress: 0,
         translatedCount: 0,
         totalSegments: 0,
+        sourceLanguage: data.source_language || sourceLanguage,
         errorMessage: null,
         segments: [],
       };
@@ -228,6 +263,7 @@ export default function Home() {
   };
 
   const handleSelectNowPlaying = () => {
+    router.push("/");
     setView("import");
   };
 
@@ -236,23 +272,13 @@ export default function Home() {
   };
 
   const handleSelectFavorites = () => {
-    setView("favorites");
+    setFavoriteItems(loadPodcastFavorites());
+    router.push("/?view=favorites");
   };
 
-  const favoriteItems: FavoriteItem[] = [
-    {
-      id: "f1",
-      original: "Well, recently I've been spending lots of time with my cat and houseplants, if you know what I mean. I'm feeling a bit lonely.",
-      translation: "嗯，最近我花了很多时间和我家的猫还有室内植物在一起，如果你明白我的意思的话。我感到有点孤独。",
-      podcastTitle: "6 Minute English六分钟英语 | 用汤来对抗孤独",
-    },
-    {
-      id: "f2",
-      original: "It might help to know that you're not the only one feeling lonely. Loneliness has been called the modern epidemic.",
-      translation: "知道你不是唯一感到孤独的人可能会有所帮助。孤独被称为现代流行病。",
-      podcastTitle: "6 Minute English六分钟英语 | 用汤来对抗孤独",
-    },
-  ];
+  const handleNavigateToPodcast = (podcastId: string, start: string) => {
+    router.push(`/podcast/${podcastId}?t=${start}`);
+  };
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden font-sans">
@@ -284,12 +310,18 @@ export default function Home() {
               onUploadClick={handleUploadClick}
               isSubmittingRss={isSubmittingRss}
               isProcessing={isProcessing}
+              sourceLanguage={sourceLanguage}
+              onSourceLanguageChange={handleSourceLanguageChange}
             />
           </>
         )}
 
         {view === "favorites" ? (
-          <FavoritesView items={favoriteItems} onPlay={() => undefined} />
+          <FavoritesView 
+            items={favoriteItems} 
+            onNavigateToPodcast={handleNavigateToPodcast}
+            onFavoritesChange={() => setFavoriteItems(loadPodcastFavorites())}
+          />
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center p-8 bg-white overflow-hidden">
             <div className="max-w-md w-full text-center space-y-12 animate-in fade-in duration-700">
@@ -307,15 +339,15 @@ export default function Home() {
                   {selectedFile
                     ? `已选择: ${selectedFile.name}`
                     : rssItems.length > 0
-                      ? `已找到 ${rssItems.length} 条 RSS 音频`
+                      ? `已找�? ${rssItems.length} �? RSS 音频`
                       : "Upload a podcast to start"}
                 </h2>
                 <p className="text-[13px] font-bold text-gray-400 leading-relaxed max-w-sm mx-auto">
                   {selectedFile
-                    ? "上传成功后会自动新增一条 History，并跳转到对应播客页面。"
+                    ? "上传成功后会自动新增一�? History，并跳转到对应播客页靀�?"
                     : rssItems.length > 0
-                      ? "选择一个音频条目后，会自动下载并进入和本地上传相同的处理流程。"
-                      : "上传本地 MP3 后，我们会立刻在左侧 History 新增记录，并进入该音频的专属页面。"}
+                      ? "选择一个音频条目后，会自动下载并进入和本地上传相同的处理流程�?"
+                      : "上传本地 MP3 后，我们会立刻在左侧 History 新增记录，并进入该音频的专属页面�?"}
                 </p>
                 {errorMessage && (
                   <p className="text-sm font-bold text-red-500">{errorMessage}</p>
@@ -339,7 +371,7 @@ export default function Home() {
                               {item.title}
                             </h3>
                             <p className="mt-2 text-[11px] font-bold text-gray-400">
-                              {item.published_at || "未提供发布时间"}
+                              {item.published_at || "未提供发布时�?"}
                             </p>
                             {item.description && (
                               <p className="mt-2 text-xs font-medium text-gray-500 line-clamp-2">
@@ -348,7 +380,7 @@ export default function Home() {
                             )}
                           </div>
                           <div className="shrink-0 rounded-full bg-blue-600 px-4 py-2 text-[11px] font-black text-white">
-                            {isCurrentItem ? "处理中..." : "选择"}
+                            {isCurrentItem ? "处理�?..." : "选择"}
                           </div>
                         </div>
                       </button>
@@ -366,10 +398,10 @@ export default function Home() {
                     {isProcessing ? (
                       <>
                         <RefreshCw className="animate-spin" size={18} />
-                        创建任务中...
+                        创建任务�?...
                       </>
                     ) : (
-                      "开始处理"
+                      "开始处�?"
                     )}
                   </button>
                   ) : (
@@ -378,7 +410,7 @@ export default function Home() {
                     className="w-full px-8 py-4 bg-gray-50 text-gray-500 rounded-2xl font-bold text-sm hover:bg-gray-100 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
                   >
                     <FileSearch size={16} />
-                    选择一个音频开始
+                    选择一个音频开�?
                   </button>
                   )}
                 </div>
@@ -388,5 +420,13 @@ export default function Home() {
         )}
       </main>
     </div>
+  );
+}
+
+export default function Home() {
+  return (
+    <Suspense fallback={null}>
+      <HomeContent />
+    </Suspense>
   );
 }

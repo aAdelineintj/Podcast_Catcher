@@ -5,15 +5,22 @@
   "main": "index.js",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint"
+    "build": "sh scripts/pb-build.sh",
+    "build:next": "next build",
+    "start": "sh scripts/pb-start.sh",
+    "start:next": "next start",
+    "lint": "next lint",
+    "feishu:bot": "node feishu-sdk-kb-bot/bot.js",
+    "feishu:kb:test": "node feishu-sdk-kb-bot/test-search.js",
+    "feishu:register": "node feishu-sdk-kb-bot/register-app.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.66.1",
     "clsx": "^2.1.1",
+    "dotenv": "^17.4.2",
     "framer-motion": "^12.38.0",
     "lucide-react": "^1.8.0",
     "next": "^16.2.4",

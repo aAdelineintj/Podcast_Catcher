@@ -3,3 +3,19 @@ node_modules/
 .env
 .DS_Store
 *.log
+
+# 任务状态目录：纯运行时数据，由 backend/main.py 启动时自动创建（os.makedirs）。
+# 内容随每次任务变化、且机器相关，入库没有意义；打包部署时也必须排除，
+# 否则本地测试任务的记录会被带上线、污染 HISTORY。
+data/jobs/
+
+# Python 运行时产物：每次运行都变，且含本机绝对路径
+venv/
+__pycache__/
+*.pyc
+
+# TypeScript 增量构建缓存：每次 tsc 都变，无版本意义
+tsconfig.tsbuildinfo
+
+# 本地 AI 助手工作区（工具状态与本地日志，非项目源码）
+.workbuddy-ai/

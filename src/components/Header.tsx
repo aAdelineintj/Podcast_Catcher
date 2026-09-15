@@ -1,9 +1,10 @@
 "use client";
 
-import React from "react";
-import { Upload, Link2, ArrowRight, Loader2 } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { Upload, Link2, ArrowRight, Loader2, Pencil, Check, X } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import type { SourceLanguage } from "@/types/podcast";
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -20,6 +21,10 @@ export const Header = ({
   onUploadClick,
   isSubmittingRss = false,
   isProcessing = false,
+  editableTitle = false,
+  onSaveTitle,
+  sourceLanguage = "auto",
+  onSourceLanguageChange,
 }: { 
   mode?: "import" | "player",
   title?: string,
@@ -31,8 +36,34 @@ export const Header = ({
   onUploadClick?: () => void,
   isSubmittingRss?: boolean,
   isProcessing?: boolean,
+  editableTitle?: boolean,
+  onSaveTitle?: (title: string) => void,
+  sourceLanguage?: SourceLanguage,
+  onSourceLanguageChange?: (value: SourceLanguage) => void,
 }) => {
   const hasTitle = title && title.trim() !== "";
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [draftTitle, setDraftTitle] = useState(title || "");
+
+  useEffect(() => {
+    setDraftTitle(title || "");
+  }, [title]);
+
+  const handleSaveTitle = () => {
+    const nextTitle = draftTitle.trim();
+    if (!nextTitle) {
+      setDraftTitle(title || "");
+      setIsEditingTitle(false);
+      return;
+    }
+    onSaveTitle?.(nextTitle);
+    setIsEditingTitle(false);
+  };
+
+  const handleCancelEdit = () => {
+    setDraftTitle(title || "");
+    setIsEditingTitle(false);
+  };
 
   return (
     <header className="flex flex-col border-b border-gray-100 bg-white shrink-0">
@@ -44,9 +75,55 @@ export const Header = ({
           ) : (
             hasTitle ? (
               <>
-                <h1 className="text-sm font-bold text-gray-900 line-clamp-1 max-w-md">
-                  {title}
-                </h1>
+                {isEditingTitle ? (
+                  <div className="flex items-center gap-2 max-w-2xl">
+                    <input
+                      value={draftTitle}
+                      onChange={(event) => setDraftTitle(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          handleSaveTitle();
+                        }
+                        if (event.key === "Escape") {
+                          event.preventDefault();
+                          handleCancelEdit();
+                        }
+                      }}
+                      autoFocus
+                      className="w-full rounded-xl border border-blue-100 bg-blue-50 px-3 py-1.5 text-sm font-bold text-gray-900 outline-none transition-all focus:border-blue-300 focus:bg-white"
+                    />
+                    <button
+                      onClick={handleSaveTitle}
+                      className="rounded-full p-2 text-blue-600 hover:bg-blue-50"
+                      aria-label="保存播客标题"
+                    >
+                      <Check size={16} />
+                    </button>
+                    <button
+                      onClick={handleCancelEdit}
+                      className="rounded-full p-2 text-gray-400 hover:bg-gray-50 hover:text-gray-600"
+                      aria-label="取消修改播客标题"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 max-w-2xl">
+                    <h1 className="text-sm font-bold text-gray-900 line-clamp-1 max-w-md">
+                      {title}
+                    </h1>
+                    {editableTitle && (
+                      <button
+                        onClick={() => setIsEditingTitle(true)}
+                        className="rounded-full p-1.5 text-gray-300 transition-all hover:bg-gray-50 hover:text-blue-500"
+                        aria-label="编辑播客标题"
+                      >
+                        <Pencil size={14} />
+                      </button>
+                    )}
+                  </div>
+                )}
                 <p className="text-[10px] font-bold text-gray-400">
                   {subtitle || "Transcription by Whisper v3 Large"}
                 </p>
@@ -59,6 +136,33 @@ export const Header = ({
 
         {/* Right Section */}
         <div className="flex items-center gap-4">
+          {(mode === "import" || onSourceLanguageChange) && (
+            <div className="flex items-center rounded-full border border-gray-100 bg-gray-50 p-1">
+              {[
+                { value: "fr", label: "法语" },
+                { value: "en", label: "英语" },
+                { value: "auto", label: "自动" },
+              ].map((option) => {
+                const isActive = sourceLanguage === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => onSourceLanguageChange?.(option.value as SourceLanguage)}
+                    className={cn(
+                      "rounded-full px-3 py-1.5 text-[11px] font-black transition-all",
+                      isActive
+                        ? "bg-white text-blue-600 shadow-sm"
+                        : "text-gray-400 hover:text-gray-700"
+                    )}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           <div className="flex items-center bg-gray-50 border border-gray-100 rounded-full px-4 py-2 w-80 group focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:bg-white transition-all relative overflow-hidden">
             <Link2 size={16} className="text-gray-400 group-focus-within:text-blue-500 mr-2" />
             <input 

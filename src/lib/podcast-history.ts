@@ -43,3 +43,16 @@ export function upsertPodcastHistoryItem(item: StoredPodcast) {
 export function getPodcastHistoryItem(id: string) {
   return loadPodcastHistory().find((item) => item.id === id) ?? null;
 }
+
+export function updatePodcastHistoryTitle(id: string, title: string) {
+  const current = loadPodcastHistory();
+  const next = current.map((item) =>
+    item.id === id
+      ? {
+          ...item,
+          title,
+        }
+      : item,
+  );
+  savePodcastHistory(next);
+}

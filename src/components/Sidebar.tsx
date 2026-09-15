@@ -105,33 +105,47 @@ export const Sidebar = ({
 };
 
 const HistoryCard = ({ item, active = false, onClick }: { 
-  item: StoredPodcast; 
+  item: any; 
   active?: boolean;
   onClick: () => void;
-}) => (
-  <div 
-    onClick={onClick}
-    className={cn(
-      "p-4 rounded-2xl cursor-pointer transition-all border-2",
-      active ? "border-blue-500 bg-white shadow-md shadow-blue-500/5" : "border-transparent hover:bg-gray-50"
-    )}
-  >
-    <h4 className={cn(
-      "text-sm font-bold mb-2 leading-tight line-clamp-2",
-      active ? "text-gray-900" : "text-gray-500"
-    )}>
-      {item.title}
-    </h4>
-    <div className="flex items-center gap-3 text-[10px] font-medium text-gray-400">
-      <span>{item.date}</span>
-      <span>•</span>
-      <span>{item.duration}</span>
-      {item.status !== "success" && (
-        <>
-          <span>•</span>
-          <span>{item.stage}</span>
-        </>
+}) => {
+  // 格式化日期逻辑
+  const formattedDate = React.useMemo(() => {
+    if (!item.date) return "";
+    try {
+      const date = new Date(item.date);
+      if (isNaN(date.getTime())) return item.date;
+      return date.toLocaleDateString("zh-CN").replace(/\//g, "-");
+    } catch {
+      return item.date;
+    }
+  }, [item.date]);
+
+  return (
+    <div 
+      onClick={onClick}
+      className={cn(
+        "p-4 rounded-2xl cursor-pointer transition-all border-2",
+        active ? "border-blue-500 bg-white shadow-md shadow-blue-500/5" : "border-transparent hover:bg-gray-50"
       )}
+    >
+      <h4 className={cn(
+        "text-sm font-bold mb-2 leading-tight line-clamp-2",
+        active ? "text-gray-900" : "text-gray-500"
+      )}>
+        {item.title}
+      </h4>
+      <div className="flex items-center gap-3 text-[10px] font-medium text-gray-400">
+        <span>{formattedDate}</span>
+        <span>•</span>
+        <span>{item.duration}</span>
+        {item.status !== "success" && (
+          <>
+            <span>•</span>
+            <span>{item.stage}</span>
+          </>
+        )}
+      </div>
     </div>
-  </div>
-);
+  );
+};

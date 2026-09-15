@@ -63,7 +63,7 @@ def start_job():
         
         if original:
             # 调用翻译函数
-            translated = baidu_translate(original, from_lang='en', to_lang='zh')
+            translated = baidu_translate(original, from_lang='fra', to_lang='zh')
             seg['trans'] = translated
             print(f"进度: [{i+1}/{len(segments)}] -> {translated[:20]}...")
         else:

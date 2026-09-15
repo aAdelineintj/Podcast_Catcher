@@ -1,5 +1,7 @@
 "use client";
 
+export type SourceLanguage = "fr" | "en" | "auto";
+
 export type TranscriptSegment = {
   start: string;
   original: string;
@@ -20,6 +22,21 @@ export type StoredPodcast = {
   progress: number;
   translatedCount: number;
   totalSegments: number;
+  sourceLanguage?: SourceLanguage;
+  transcriptionLanguage?: string | null;
   errorMessage?: string | null;
   segments: TranscriptSegment[];
+};
+
+export type FavoriteSentence = {
+  id: string;
+  podcastId: string;
+  podcastTitle: string;
+  mediaUrl: string | null;
+  start: string;
+  end?: string;
+  original: string;
+  translation: string;
+  tags?: string[];
+  createdAt: string;
 };
