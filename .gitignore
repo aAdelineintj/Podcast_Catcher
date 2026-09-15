@@ -19,3 +19,8 @@ tsconfig.tsbuildinfo
 
 # 本地 AI 助手工作区（工具状态与本地日志，非项目源码）
 .workbuddy-ai/
+
+# 用户上传的音频与转写产物：运行时数据（体积大、含用户内容），不入库。
+# 目录本身由 backend/main.py 启动时 os.makedirs 创建，无需占位文件。
+data/input/*
+data/output/*
