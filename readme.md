@@ -1,75 +1,189 @@
-产品需求文档 (PRD): 
-1.产品背景
+# 播客精听
 
-在完成 Whisper 转录与 API 翻译的后端链路验证后，本阶段目标是构建一个高性能、高颜值的 Web 前端容器，将静态的 JSON 数据转化为可感知的双语学习体验。
-定位：一个“以播客播放为主 + 句子精听增强”的播放器
-技术方案：+supacase
-json数据格式：
-识别字幕的JSON数据
-{
-"start": 0.0,
-"end": 19.72,
-"text": "Hello, once again, and welcome to Learn French by Podcast. My name is Hugh Nagel, and"
-},
+把一集英语/法语播客变成**可逐句精听的双语字幕**。
 
-翻译好的JSON数据
-{
-"start": 436.28,
-"end": 439.28,
-"text": "Let's talk a little more about your interests.",
-"trans": "让我们多谈谈你的兴趣。"
-},
+上传音频 → 本机 Whisper 转写 → 百度翻译 → 页面上双语对照播放，点任意一句即可跳转重听、复制、收藏。
 
+**完全免费**：算力跑在自己电脑上，云端只用 Supabase 免费版的数据库与对象存储。
 
-流程： 上传音频-拿到音频-调用whisper库识别字幕-获得识别字幕的JSON数据-调用百度翻译API翻译-获得翻译好的JSON数据
+---
 
-2. 核心功能与交互逻辑
-A. 播放器 
-功能描述：常驻页面顶部或底部的音频播放组件。
-交互逻辑：
-上传按钮：支持上传音频mp3文件 点击上传按钮 呼出系统文件管理台
-RSS链接文本框：支持提供RSS链接，点击解析按钮获得音频
-进度控制：。支持拖动进度条，且高亮行随之精确跳转
-核心能力：
-播放 / 暂停 
-拖动进度条 
-上一句 / 下一句
-单句循环n次-下一句 
-交互逻辑：支持拖动进度条，且高亮行随之精确跳转，音频进度随之跳转
-点击循环功能 才显示选择次数选框 可调节次数
-拖进度 = 退出单句循环，回到正常播放
+## 它是怎么做到免费的
 
+转写是整条链路里最贵的一环（云端 ASR 按次计费）。这里把它挪到本机 CPU 上跑 Whisper，
+云端只负责**存数据**和**派任务**：
 
+```
+┌──────────────┐   ① 建任务 + 签上传地址
+│   浏览器      │ ──────────────────────────────┐
+│  (Vercel)    │                               ▼
+│              │   ② 音频直传（不经 Vercel）  ┌─────────────────┐
+│              │ ──────────────────────────▶ │    Supabase     │
+│              │                             │  · Postgres     │
+│  ④ 轮询字幕   │ ◀────────────────────────── │  · 私有 Storage │
+└──────────────┘   ③ 读任务 / 写字幕          └─────────────────┘
+                                                      ▲  │
+                                                      │  ▼
+                                            ┌─────────────────────┐
+                                            │  本机 worker 轮询    │
+                                            │  Whisper 转写        │
+                                            │  百度翻译            │
+                                            │  压缩音频回传         │
+                                            └─────────────────────┘
+```
 
-B.双语流UI
-职责：
-渲染字幕 
-高亮当前句
-样式：
-双语排列：左侧播客字幕，右侧翻译字幕，双语字幕同一行分两列排列
-复制按钮、收藏按钮
-已收藏的字幕 原收藏按钮位置更换为一个打勾的图标
-自动高亮：自动居中滚动并高亮当前播放句及其翻译字幕。
-字幕采用卡片式布局、具有苹果（Apple）风格的极简高亮状态。时间戳放置在字幕左侧 并且距离文本有一定距离。正文文本需要方便阅读
-高亮行带有柔和阴影的悬浮卡片，竖直高亮条位于卡片最左侧边缘，方便用户锁定正在听的内容
+两个关键设计：
 
-交互逻辑：
-进度控制：支持单击某行原文字幕或翻译字幕 重新播放整句
-拷贝字幕：支持点击复制按钮进行快速拷贝当前字幕（原文）
-收藏句子：字幕框外悬浮一个收藏icon 点击 底下弹出“收藏成功”提示
-单句循环 → 永远高亮该句
-点击句子 → 立即高亮
+- **音频不经过 Vercel**。Vercel Serverless 的请求体上限是 4.5MB，一集播客动辄几十 MB。
+  浏览器拿到签名上传地址后**直传 Supabase Storage**，绕开这个限制。
+- **worker 用「租约 + 原子认领」抢任务**（`FOR UPDATE SKIP LOCKED` + 30 分钟租约），
+  所以同一台机器可以开多个 worker，任务不会被重复处理。
 
+---
 
-C.播放历史区：历史上传的播客列表，
-D.支持上传方式：本地上传MP3文件/提供RSS链接：文件上传按钮，点击确定按钮，进行新页面 +RSS链接输入框 ，点击“解析”按钮进入新页面
-E.收藏夹  位于左侧底部  卡片式排列收藏语料，支持点击卡片中右侧的“播放”按钮精听，支持一键导出anki文件、excel文件
-收藏卡片设计：
-原文
-翻译
-播客标题（或来源）
-点击卡片：
-跳转至对应播客播放页
-从该句 start 时间开始自动播放
-字幕区域自动滚动并高亮该句
+## 核心特性
 
+- **逐句精听**：点任意一句原文或译文即从该句起点重播；自动高亮并滚动到当前句
+- **双语对照**：左右两列同句对齐，时间戳独立成列
+- **收藏夹**：跨播客收集句子，支持打标签；改播客标题时收藏夹里的标题跟着变，
+  删掉播客后收藏仍保留原句与快照标题
+- **播放历史**：云端权威 + localStorage 首屏缓存，首屏不闪白
+- **音频自动压缩**：转写完成后压到 64kbps 单声道回传（约为原体积 15%），
+  免费版 1GB Storage 从「只够存 10~20 集」变成「够存上百集」
+
+---
+
+## 快速开始
+
+### 前置
+
+- Node.js 20.9+（Next 16 的要求）、Python 3.10+、`ffmpeg`（用于音频压缩，缺失会静默跳过压缩）
+- 一个 Supabase 项目（免费版即可）
+
+### 1. 初始化 Supabase
+
+到 Supabase SQL Editor 里执行 [`supabase/schema.sql`](supabase/schema.sql)。它会建好：
+
+- 4 张表：`podcasts` / `segments` / `favorites` / `worker_heartbeat`
+- 2 个 RPC：`claim_next_podcast`（原子认领）、`touch_worker`（心跳）
+- 1 个**私有** bucket：`podcast-audio`
+
+> 安全模型是 **RLS 开启 + 零策略**：只有 `service_role` 能读写，浏览器端不持有任何 Supabase 密钥。
+> 因此**不要**加 `NEXT_PUBLIC_SUPABASE_ANON_KEY`，也不要为「能连上」加 `using (true)` 的策略。
+
+### 2. 配置环境变量
+
+```sh
+cp .env.example .env
+```
+
+必填 5 项：
+
+| 变量 | 用途 |
+|---|---|
+| `SUPABASE_URL` | `https://<ref>.supabase.co`（**不要**带 `/rest/v1/` 后缀） |
+| `SUPABASE_SERVICE_ROLE_KEY` | 服务端密钥，绕过 RLS，**绝不能提交进 git** |
+| `SUPABASE_STORAGE_BUCKET` | `podcast-audio` |
+| `PASSPHRASE` | 站点访问口令 |
+| `AUTH_SECRET` | Cookie 签名密钥（`openssl rand -hex 32`） |
+
+> `PASSPHRASE` / `AUTH_SECRET` 缺任一，`src/proxy.ts` 会 **fail-closed**：整站返回 503 且不报错。
+> 这是刻意设计 —— 宁可打不开，也不要无口令暴露。
+
+### 3. 跑起来
+
+```sh
+npm install
+npm run dev            # 前端 http://localhost:3000
+
+# 另开一个终端跑 worker（它才是真正干活的）
+cd backend
+../venv/bin/python -m worker.worker
+```
+
+worker 启动前建议先自检（**不需要 Supabase 账号**，全部打桩）：
+
+```sh
+../venv/bin/python -m worker.selftest
+```
+
+想让它常驻（开机自启、崩溃重拉）：
+
+```sh
+sh scripts/install-worker.sh install   # 另有 status / logs / uninstall
+```
+
+### 4. 部署到 Vercel
+
+1. 导入仓库
+2. **Build Command 改成 `npm run build:next`** —— 默认的 `npm run build` 走的是
+   单容器部署脚本 `scripts/pb-build.sh`，在 Vercel 上会失败
+3. 配置上面那 5 个环境变量。**不要**设 `LOCAL_FASTAPI` / `BACKEND_ORIGIN` /
+   `NEXT_PUBLIC_*` 中的任何一个
+
+---
+
+## 项目结构
+
+```
+src/
+  app/
+    api/                     # 7 个 Route Handler，前端只跟这里说话
+      podcasts/              # 列表 / 创建（建行 + 签上传地址）
+        [id]/                # 详情（含字幕）/ 改名 / 删除
+          uploaded/          # 标记「音频传完了」—— worker 此刻才可能认领
+          media/             # 302 到现签 URL（不暴露长期链接）
+      favorites/             # 收藏列表 / 创建
+      health/                # worker 在线探针
+    podcast/[id]/            # 精听页
+  lib/
+    supabase-server.ts       # 服务端客户端（持 service_role）
+    podcast-rows.ts          # 行 ↔ 领域对象映射
+  proxy.ts                   # 口令闸门
+backend/
+  pipeline.py                # 切句 / 翻译口径 —— 本地与云端**共用这一份**
+  whisper_asr.py             # 本机 Whisper 封装
+  worker/
+    worker.py                # 轮询 → 转写 → 翻译 → 回写 → 压缩
+    supabase_client.py       # PostgREST + Storage REST 直连（不依赖 supabase-py）
+    selftest.py              # 37 项断言，全打桩
+    e2e_cloud.py             # 真实云端联调脚本
+supabase/schema.sql          # 建表 + RPC + bucket
+PRD/架构决策记录.md           # 为什么这么设计、踩过哪些坑
+```
+
+---
+
+## 值得一读的设计取舍
+
+都记在 [`PRD/架构决策记录.md`](PRD/架构决策记录.md) 里，几条比较有意思的：
+
+- **`/api/*` 永远不转发给本地 FastAPI**。`next.config.ts` 用的是 `beforeFiles` rewrite，
+  它跑在文件系统路由**之前** —— 一旦转发 `/api/*`，所有 Route Handler 都会被静默遮蔽，
+  Next 不会给任何提示。
+- **本地 FastAPI 保留但用开关隔离**（`LOCAL_FASTAPI=1`，默认关闭）。调试转写/翻译管线时
+  那套闭环仍然好用，但线上完全不需要它。
+- **用 `audio_uploaded_at` 而非状态字段当上传开关**。它为 NULL 就代表「元数据建了行、
+  但音频还没传完」，认领函数要求它非空 —— 于是上传中断的任务永远不会被 worker 误领。
+- **不装 `supabase-py`**。worker 只用到 6 个端点，用 `requests` 直连 PostgREST + Storage REST
+  比拖进一个 SDK 更可控，也更容易看懂每个请求的形状。
+
+---
+
+## 已知限制
+
+- **单用户自用**，没有账号体系与配额系统
+- **worker 必须开着**。转写算力在本机，电脑休眠时任务会停在「排队中」——
+  页面上的 `/api/health` 探针就是为了把这件事讲清楚
+- 首次上传后需要等 worker 轮询（默认 5 秒）才会开工
+- 支持的容器：mp3 / m4a / wav / aac / ogg / flac / mp4（其余扩展名一律按 mp3 处理）。
+  只取音轨，不解析视频画面
+
+---
+
+## 致谢与依赖
+
+本机转写 [openai-whisper](https://github.com/openai/whisper) ·
+持久化 [Supabase](https://supabase.com) ·
+翻译 [百度翻译开放平台](https://fanyi-api.baidu.com) ·
+前端 [Next.js](https://nextjs.org)
