@@ -57,7 +57,10 @@ export async function GET() {
             hostname: latest.hostname,
             currentJob: latest.current_job,
             lastSeen: latest.last_seen,
-            ageSeconds: ageMs === null ? null : Math.round(ageMs / 1000),
+            // 夹到 ≥0。`last_seen` 是 Supabase 用它的 `now()` 写的，而这里用
+            // 本机时钟做差 —— 两台机器的时钟不可能完全一致（实测会差出 1 秒左右）。
+            // 不夹的话偶尔算出 -1，前端就会显示「最后心跳 -1 秒前」。
+            ageSeconds: ageMs === null ? null : Math.max(0, Math.round(ageMs / 1000)),
           }
         : {
             online: false,
