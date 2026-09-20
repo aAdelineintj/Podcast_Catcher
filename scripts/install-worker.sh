@@ -75,12 +75,14 @@ print('配置 OK：' + config.describe())
 
   mkdir -p "$(dirname "$PLIST")" "$LOG_DIR"
 
-  # 生成 plist。几个要点写在这里而不是 plist 内部 ——
-  # launchd 的解析器对 XML 注释很挑，实测 plist 里带注释会让
-  # `launchctl bootstrap` 报 `5: Input/output error`（一个完全指不到原因的错）。
+  # 生成 plist。几个要点写在这里而不是 plist 内部：
   #   · PATH 必须含 /opt/homebrew/bin —— ffmpeg 在那里，少了它音频压缩会被静默跳过
   #   · PYTHONUNBUFFERED=1 —— 否则日志攒满一块才落盘，排查时看不到实时进度
   #   · KeepAlive + ThrottleInterval=15 —— 崩溃自动拉起，但不会疯狂重启刷爆日志
+  #   · 下面这段 heredoc 里不放 XML 注释 —— 曾经怀疑注释会让 bootstrap 报
+  #     `5: Input/output error`，但 2026-09-20 用无注释的极简 plist 实测**同样报 EIO**，
+  #     所以那个归因是错的（真正原因是执行上下文，见下面的 bootstrap 段）。
+  #     仍然不放注释，纯粹是因为注释在这里没有价值，理由写在 shell 侧更清楚。
   cat > "$PLIST" <<PLIST_EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -101,10 +103,8 @@ print('配置 OK：' + config.describe())
 
   <key>EnvironmentVariables</key>
   <dict>
-    <!-- 必须含 /opt/homebrew/bin，ffmpeg 在那里；少了它音频压缩会被静默跳过 -->
     <key>PATH</key>
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-    <!-- 不缓冲 stdout，否则日志要攒满一块才落盘，排查时看不到实时进度 -->
     <key>PYTHONUNBUFFERED</key>
     <string>1</string>
   </dict>
@@ -127,7 +127,23 @@ PLIST_EOF
 
   # 已加载过就先卸载，避免 bootstrap 报「service already loaded」
   launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
-  launchctl bootstrap "$DOMAIN" "$PLIST"
+
+  # bootstrap 必须在**用户的 GUI 登录会话**里执行。
+  # 从守护进程 / IDE 内置终端 / 远程会话里跑，launchd 会直接拒绝，而且报的是
+  # 一个完全指不到原因的 `5: Input/output error`。2026-09-20 实测：连
+  # `/bin/sleep 3600` 这种极简 plist 也一样报 EIO，`launchctl setenv` 则明说
+  # 「Not privileged to set domain environment」—— 即问题不在 plist 内容，
+  # 而在当前进程不属于该域。所以这里自己兜住错误，把「该去哪儿跑」说出来。
+  if ! bootstrap_out=$(launchctl bootstrap "$DOMAIN" "$PLIST" 2>&1); then
+    echo "✗ 加载 launchd 服务失败：" >&2
+    echo "  $bootstrap_out" >&2
+    echo >&2
+    echo "  最常见的原因：当前进程不在你的 GUI 登录会话里。" >&2
+    echo "  请打开「终端」App（不是 IDE 内置终端、不是远程会话）重新执行：" >&2
+    echo "      sh $0" >&2
+    exit 1
+  fi
+
   launchctl kickstart -k "$DOMAIN/$LABEL"
 
   echo "✓ 已安装并启动：$LABEL"
