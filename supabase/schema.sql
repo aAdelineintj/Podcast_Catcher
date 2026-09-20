@@ -61,6 +61,23 @@ create index if not exists podcasts_claim_idx
   on public.podcasts (status, created_at)
   where audio_uploaded_at is not null;
 
+-- ⚠️ 已建过表的库要**单独跑**下面这两句（`create table if not exists` 不会给已存在的表加约束）。
+-- 先 drop 再 add，可重复执行。
+--
+-- 钉住一个不变量：`audio_uploaded_at` 非空就代表「音频已经传完」，
+-- 那 `audio_path` 必须同时有值。正常流程下这两列由
+-- `POST /api/podcasts/[id]/uploaded` 在同一次 PATCH 里一起写，天然一致；
+-- 但历史上出现过「只写了 audio_uploaded_at」的手工行，被
+-- `claim_next_podcast` 认领后 worker 直接抛
+-- `RuntimeError: podcasts.audio_path 为空，无法下载音频`，
+-- 白白烧掉 3 次 attempts。与其在认领函数里加判断（那样违规行会永远停在
+-- 「排队中」，比明确失败更难排查），不如在数据层让它压根写不进来。
+alter table public.podcasts
+  drop constraint if exists podcasts_audio_upload_consistent;
+alter table public.podcasts
+  add  constraint podcasts_audio_upload_consistent
+       check (audio_uploaded_at is null or audio_path is not null);
+
 
 -- ───────────────────────────────────────────────────────────────────────────
 -- 2. segments —— 字幕行
