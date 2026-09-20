@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Play, Headphones, FileText, Download, Pause, Trash2, Tag, NotebookText } from "lucide-react";
+import { Play, Headphones, Pause, Trash2, Tag } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { deletePodcastFavorite, updatePodcastFavoriteTags } from "@/lib/podcast-favorites";
@@ -30,62 +30,6 @@ export const FavoritesView = ({
   const filteredItems = items.filter((item) =>
     selectedPodcastTitle === "all" ? true : item.podcastTitle === selectedPodcastTitle,
   );
-
-  const handleExportMarkdown = () => {
-    const exportItems = filteredItems;
-    if (exportItems.length === 0) {
-      return;
-    }
-
-    const title =
-      selectedPodcastTitle === "all"
-        ? "我的收藏"
-        : `我的收藏 - ${selectedPodcastTitle}`;
-
-    const lines = [
-      `# ${title}`,
-      "",
-      `导出时间：${new Date().toLocaleString("zh-CN")}`,
-      `条目数量：${exportItems.length}`,
-      "",
-      ...exportItems.flatMap((item, index) => {
-        const tags = (item.tags ?? []).map((tag) => `#${tag}`).join(" ");
-        return [
-          `## ${index + 1}. ${item.podcastTitle} · ${item.start}`,
-          "",
-          `- 播客：${item.podcastTitle}`,
-          `- 时间点：${item.start}${item.end ? ` - ${item.end}` : ""}`,
-          `- 收藏时间：${new Date(item.createdAt).toLocaleString("zh-CN")}`,
-          `- 标签：${tags || "无"}`,
-          "",
-          "### 原文",
-          "",
-          item.original,
-          "",
-          "### 翻译",
-          "",
-          item.translation || "暂无翻译",
-          "",
-          "---",
-          "",
-        ];
-      }),
-    ];
-
-    const blob = new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const safeName =
-      selectedPodcastTitle === "all"
-        ? "favorites"
-        : selectedPodcastTitle.replace(/[\\/:*?\"<>|]/g, "_");
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${safeName}-${new Date().toISOString().slice(0, 10)}.md`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-  };
 
   const parseTimeToSeconds = (time: string | undefined) => {
     if (!time) {
@@ -154,23 +98,34 @@ export const FavoritesView = ({
     audioRef.current = audio;
   };
 
-  const handleDeleteFavorite = (id: string) => {
+  // 这两个操作现在要打到服务端，所以是异步的。
+  // 失败必须让用户看见 —— 静默失败会让「取消收藏」看起来点了没反应，
+  // 而实际上只是网络断了，下次刷新那条收藏又回来了。
+  const handleDeleteFavorite = async (id: string) => {
     if (playingId === id) {
       audioRef.current?.pause();
       setPlayingId(null);
     }
-    deletePodcastFavorite(id);
-    onFavoritesChange?.();
+    try {
+      await deletePodcastFavorite(id);
+      onFavoritesChange?.();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "取消收藏失败，请重试。");
+    }
   };
 
-  const handleSaveTags = (id: string, rawValue: string) => {
+  const handleSaveTags = async (id: string, rawValue: string) => {
     const tags = rawValue
       .split(/[\n,，]+/)
       .map((tag) => tag.trim().replace(/^#/, ""))
       .filter(Boolean);
 
-    updatePodcastFavoriteTags(id, tags);
-    onFavoritesChange?.();
+    try {
+      await updatePodcastFavoriteTags(id, tags);
+      onFavoritesChange?.();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "保存标签失败，请重试。");
+    }
   };
 
   return (
@@ -183,24 +138,6 @@ export const FavoritesView = ({
             <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
             {filteredItems.length}/{items.length} 条收藏语料
           </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={handleExportMarkdown}
-            disabled={filteredItems.length === 0}
-            className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-2xl font-bold text-xs hover:bg-blue-700 transition-all shadow-lg shadow-blue-600/10 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <NotebookText size={16} />
-            <span>导出 Markdown</span>
-          </button>
-          <button className="flex items-center gap-2 px-6 py-2.5 bg-gray-900 text-white rounded-2xl font-bold text-xs hover:bg-gray-800 transition-all shadow-lg shadow-gray-900/10 active:scale-[0.98]">
-            <FileText size={16} />
-            <span>导出 Anki</span>
-          </button>
-          <button className="flex items-center gap-2 px-6 py-2.5 bg-white text-gray-600 rounded-2xl font-bold text-xs hover:bg-gray-50 transition-all border border-gray-100 active:scale-[0.98]">
-            <Download size={16} />
-            <span>导出 Excel</span>
-          </button>
         </div>
       </div>
 

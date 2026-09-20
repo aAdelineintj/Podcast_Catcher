@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Play, Pause, SkipBack, SkipForward, Share2, Copy, Heart } from "lucide-react";
+import { Play, Pause, Copy, Heart } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
@@ -16,8 +16,6 @@ export interface BottomPlayerRef {
   togglePlayPause: () => void;
 }
 
-export type SentenceLoopCount = 2 | 3 | 5 | 10 | "infinite";
-
 export const BottomPlayer = React.forwardRef<BottomPlayerRef, { 
   audioSrc?: string | null;
   title?: string;
@@ -28,12 +26,6 @@ export const BottomPlayer = React.forwardRef<BottomPlayerRef, {
   onCopyResult?: (message: string) => void;
   onFavoriteCurrent?: () => void;
   isCurrentFavorited?: boolean;
-  onPreviousSentence?: () => void;
-  onNextSentence?: () => void;
-  sentenceLoopEnabled?: boolean;
-  onToggleSentenceLoop?: (enabled: boolean) => void;
-  sentenceLoopCount?: SentenceLoopCount;
-  onSentenceLoopCountChange?: (count: SentenceLoopCount) => void;
 }>(({
   audioSrc,
   title = "Podcast",
@@ -44,12 +36,6 @@ export const BottomPlayer = React.forwardRef<BottomPlayerRef, {
   onCopyResult,
   onFavoriteCurrent,
   isCurrentFavorited = false,
-  onPreviousSentence,
-  onNextSentence,
-  sentenceLoopEnabled = false,
-  onToggleSentenceLoop,
-  sentenceLoopCount = "infinite",
-  onSentenceLoopCountChange,
 }, ref) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const speedMenuRef = useRef<HTMLDivElement | null>(null);
@@ -173,7 +159,6 @@ export const BottomPlayer = React.forwardRef<BottomPlayerRef, {
   };
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
-  const loopCountOptions: SentenceLoopCount[] = [2, 3, 5, 10, "infinite"];
   const speedOptions = [0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6];
 
   const handleCopy = async () => {
@@ -223,9 +208,6 @@ export const BottomPlayer = React.forwardRef<BottomPlayerRef, {
         {/* Left: Actions */}
         <div className="flex items-center gap-6 text-gray-400">
           <div className="text-[10px] font-bold font-mono min-w-8">{formatTime(currentTime)}</div>
-          <button className="hover:text-blue-500 transition-colors">
-            <Share2 size={18} />
-          </button>
           <button onClick={handleCopy} className="hover:text-blue-500 transition-colors">
             <Copy size={18} />
           </button>
@@ -241,13 +223,7 @@ export const BottomPlayer = React.forwardRef<BottomPlayerRef, {
         </div>
 
         {/* Middle: Controls */}
-        <div className="flex items-center gap-10 ml-20">
-          <div className="w-12 h-12 flex items-center justify-center text-gray-400 hover:text-gray-900 transition-all">
-             <button onClick={onPreviousSentence} className="hover:scale-110 active:scale-95 transition-all">
-               <SkipBack size={24} className="fill-current" />
-             </button>
-          </div>
-          
+        <div className="flex items-center">
           <button 
             onClick={togglePlay}
             className="w-14 h-14 bg-gray-900 text-white rounded-full flex items-center justify-center shadow-xl shadow-gray-900/20 hover:scale-105 active:scale-95 transition-all"
@@ -258,73 +234,12 @@ export const BottomPlayer = React.forwardRef<BottomPlayerRef, {
               <Play size={28} className="fill-current ml-1" />
             )}
           </button>
-
-          <div className="w-12 h-12 flex items-center justify-center text-gray-400 hover:text-gray-900 transition-all">
-             <button onClick={onNextSentence} className="hover:scale-110 active:scale-95 transition-all">
-               <SkipForward size={24} className="fill-current" />
-             </button>
-          </div>
         </div>
 
-        {/* Right: Mode & Speed */}
+        {/* Right: Speed */}
         <div className="flex items-center gap-8">
           <div className="text-[10px] font-bold font-mono text-gray-400 min-w-8 text-right">{formatTime(duration)}</div>
           
-          <div className="flex flex-col items-center gap-2">
-            <div className="flex flex-col items-center gap-1.5">
-              <span className="text-[8px] font-bold text-gray-300 uppercase tracking-widest">LOOP MODE</span>
-              <div className="flex items-center bg-gray-50 rounded-full p-1 border border-gray-100">
-                <button
-                  onClick={() => onToggleSentenceLoop?.(true)}
-                  className={cn(
-                    "px-3 py-1 text-[10px] font-bold rounded-full transition-all",
-                    sentenceLoopEnabled
-                      ? "text-gray-900 bg-white shadow-sm"
-                      : "text-gray-400 hover:text-gray-900"
-                  )}
-                >
-                  Sentence
-                </button>
-                <div className="w-px h-3 bg-gray-200" />
-                <button
-                  onClick={() => onToggleSentenceLoop?.(false)}
-                  className={cn(
-                    "px-3 py-1 text-[10px] font-bold rounded-full transition-all",
-                    sentenceLoopEnabled
-                      ? "text-gray-400 hover:text-gray-900"
-                      : "text-gray-900 bg-white shadow-sm"
-                  )}
-                >
-                  Off
-                </button>
-              </div>
-            </div>
-
-            <div className="flex flex-col items-center gap-1.5">
-              <span className="text-[8px] font-bold text-gray-300 uppercase tracking-widest">LOOP COUNT</span>
-              <div className="flex items-center gap-1 rounded-full border border-gray-100 bg-gray-50 p-1">
-                {loopCountOptions.map((option) => {
-                  const isActive = sentenceLoopCount === option;
-                  const label = option === "infinite" ? "一直" : String(option);
-                  return (
-                    <button
-                      key={option}
-                      onClick={() => onSentenceLoopCountChange?.(option)}
-                      className={cn(
-                        "rounded-full px-2.5 py-1 text-[10px] font-bold transition-all",
-                        isActive
-                          ? "bg-white text-gray-900 shadow-sm"
-                          : "text-gray-400 hover:text-gray-900"
-                      )}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-
           <div ref={speedMenuRef} className="relative">
             <button
               onClick={() => setIsSpeedMenuOpen((open) => !open)}

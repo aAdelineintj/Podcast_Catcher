@@ -24,3 +24,22 @@ tsconfig.tsbuildinfo
 # 目录本身由 backend/main.py 启动时 os.makedirs 创建，无需占位文件。
 data/input/*
 data/output/*
+
+# 本机 worker 的音频中转目录。正常情况下处理完即删，但进程被强杀时会残留，
+# 里面是整份音频副本 —— 绝不能入库。
+data/worker_tmp/
+
+# Next dev 的缓存备份目录。改配置前手工留的退路，纯构建产物，动辄上百 MB。
+# 注意 .gitignore 的 `.next/` 匹配不到 `.next.dev-bak.1789494775/` 这种名字。
+.next.dev-bak.*/
+
+# ASR 调参实验的产物：每次实验都重新生成，且会随语料变大。
+result*.json
+split_auto*_result.json
+.asr_candidates.json
+
+# 联调用的样例音频（单个 17MB 左右）。体积大且可随时重新获取，
+# backend/worker/e2e_cloud.py 找不到它时会给出明确提示并跳过。
+podcast-asr-test/*.mp3
+podcast-asr-test/*.m4a
+podcast-asr-test/*.wav

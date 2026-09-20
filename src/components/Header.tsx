@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Upload, Link2, ArrowRight, Loader2, Pencil, Check, X } from "lucide-react";
+import { Upload, Loader2, Pencil, Check, X } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import type { SourceLanguage } from "@/types/podcast";
@@ -14,12 +14,7 @@ export const Header = ({
   mode = "import", 
   title, 
   subtitle,
-  rssValue = "",
-  rssPlaceholder = "RSS 或播客链接...",
-  onRssChange,
-  onSubmitRss,
   onUploadClick,
-  isSubmittingRss = false,
   isProcessing = false,
   editableTitle = false,
   onSaveTitle,
@@ -29,12 +24,7 @@ export const Header = ({
   mode?: "import" | "player",
   title?: string,
   subtitle?: string,
-  rssValue?: string,
-  rssPlaceholder?: string,
-  onRssChange?: (value: string) => void,
-  onSubmitRss?: () => void,
   onUploadClick?: () => void,
-  isSubmittingRss?: boolean,
   isProcessing?: boolean,
   editableTitle?: boolean,
   onSaveTitle?: (title: string) => void,
@@ -125,7 +115,7 @@ export const Header = ({
                   </div>
                 )}
                 <p className="text-[10px] font-bold text-gray-400">
-                  {subtitle || "Transcription by Whisper v3 Large"}
+                  {subtitle || "Transcription by Whisper (local)"}
                 </p>
               </>
             ) : (
@@ -162,38 +152,6 @@ export const Header = ({
               })}
             </div>
           )}
-
-          <div className="flex items-center bg-gray-50 border border-gray-100 rounded-full px-4 py-2 w-80 group focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:bg-white transition-all relative overflow-hidden">
-            <Link2 size={16} className="text-gray-400 group-focus-within:text-blue-500 mr-2" />
-            <input 
-              type="text" 
-              value={rssValue}
-              placeholder={rssPlaceholder}
-              className="flex-1 bg-transparent text-xs font-bold focus:outline-none text-gray-700"
-              disabled={isSubmittingRss}
-              onChange={(event) => onRssChange?.(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  onSubmitRss?.();
-                }
-              }}
-            />
-            <button 
-              onClick={onSubmitRss}
-              disabled={isSubmittingRss}
-              className={cn(
-                "text-blue-500 hover:text-blue-600 transition-colors ml-2 flex items-center justify-center",
-                isSubmittingRss && "opacity-50 cursor-not-allowed"
-              )}
-            >
-              {isSubmittingRss ? (
-                <Loader2 size={18} strokeWidth={3} className="animate-spin" />
-              ) : (
-                <ArrowRight size={18} strokeWidth={3} />
-              )}
-            </button>
-          </div>
 
           <button 
             onClick={onUploadClick}
