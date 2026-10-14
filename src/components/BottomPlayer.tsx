@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Play, Pause, Copy, Heart } from "lucide-react";
+import { Play, Pause, Copy, Heart, ChevronLeft, ChevronRight, Repeat } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
@@ -26,6 +26,17 @@ export const BottomPlayer = React.forwardRef<BottomPlayerRef, {
   onCopyResult?: (message: string) => void;
   onFavoriteCurrent?: () => void;
   isCurrentFavorited?: boolean;
+  onPrevSentence?: () => void;
+  onNextSentence?: () => void;
+  hasPrevSentence?: boolean;
+  hasNextSentence?: boolean;
+  loopEnabled?: boolean;
+  loopCount?: number;
+  onToggleLoop?: () => void;
+  onChangeLoopCount?: (count: number) => void;
+  onLoopFinished?: () => void;
+  sentenceBoundaries?: { start: number; end: number }[];
+  activeIndex?: number;
 }>(({
   audioSrc,
   title = "Podcast",
@@ -36,6 +47,17 @@ export const BottomPlayer = React.forwardRef<BottomPlayerRef, {
   onCopyResult,
   onFavoriteCurrent,
   isCurrentFavorited = false,
+  onPrevSentence,
+  onNextSentence,
+  hasPrevSentence = false,
+  hasNextSentence = false,
+  loopEnabled = false,
+  loopCount = 2,
+  onToggleLoop,
+  onChangeLoopCount,
+  onLoopFinished,
+  sentenceBoundaries,
+  activeIndex = -1,
 }, ref) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const speedMenuRef = useRef<HTMLDivElement | null>(null);
@@ -44,6 +66,15 @@ export const BottomPlayer = React.forwardRef<BottomPlayerRef, {
   const [duration, setDuration] = useState(0);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [isSpeedMenuOpen, setIsSpeedMenuOpen] = useState(false);
+
+  // 单句循环：loopAnchorRef = 当前要循环的句索引；loopPlaysRef = 已播放遍数。
+  // 开循环或切到新句子时，把锚点钉到 activeIndex 并重置遍数。
+  const loopAnchorRef = useRef<number>(-1);
+  const loopPlaysRef = useRef<number>(0);
+  useEffect(() => {
+    loopAnchorRef.current = loopEnabled && activeIndex >= 0 ? activeIndex : -1;
+    loopPlaysRef.current = 0;
+  }, [activeIndex, loopEnabled]);
 
   const parseTimeToSeconds = (timeStr: string | number): number => {
     if (typeof timeStr === "number") return timeStr;
@@ -87,6 +118,26 @@ export const BottomPlayer = React.forwardRef<BottomPlayerRef, {
       const time = audio.currentTime;
       setCurrentTime(time);
       onTimeUpdate?.(time);
+
+      // 单句循环：播放到句尾时，回到句首重播（有限遍数播完则停在句尾并关循环）。
+      if (loopEnabled && loopAnchorRef.current >= 0 && !audio.paused) {
+        const boundary = sentenceBoundaries?.[loopAnchorRef.current];
+        if (boundary && time >= boundary.end - 0.06) {
+          const completed = loopPlaysRef.current + 1;
+          if (loopCount === -1) {
+            loopPlaysRef.current = completed;
+            audio.currentTime = boundary.start;
+          } else if (completed < loopCount) {
+            loopPlaysRef.current = completed;
+            audio.currentTime = boundary.start;
+          } else {
+            loopPlaysRef.current = completed;
+            loopAnchorRef.current = -1;
+            audio.pause();
+            onLoopFinished?.();
+          }
+        }
+      }
     };
     const handleLoadedMetadata = () => {
       setDuration(audio.duration);
@@ -160,6 +211,7 @@ export const BottomPlayer = React.forwardRef<BottomPlayerRef, {
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
   const speedOptions = [0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6];
+  const loopCounts = [1, 2, 3, 4, 5, -1];
 
   const handleCopy = async () => {
     const text = copySourceText?.trim();
@@ -220,10 +272,48 @@ export const BottomPlayer = React.forwardRef<BottomPlayerRef, {
           >
             <Heart size={18} className={cn(isCurrentFavorited && "fill-current")} />
           </button>
+          <div className="flex items-center gap-1.5 pl-2 border-l border-gray-100">
+            <button
+              onClick={onToggleLoop}
+              title={loopEnabled ? "单句循环：开" : "单句循环：关"}
+              className={cn(
+                "transition-colors",
+                loopEnabled ? "text-blue-500" : "text-gray-400 hover:text-blue-500"
+              )}
+            >
+              <Repeat size={18} />
+            </button>
+            {loopEnabled && (
+              <div className="flex items-center gap-1">
+                {loopCounts.map((count) => (
+                  <button
+                    key={count}
+                    onClick={() => onChangeLoopCount?.(count)}
+                    className={cn(
+                      "min-w-[20px] rounded-md px-1.5 py-0.5 text-[10px] font-black transition-all",
+                      loopCount === count
+                        ? "bg-gray-900 text-white"
+                        : "text-gray-400 hover:bg-gray-100"
+                    )}
+                  >
+                    {count === -1 ? "∞" : count}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Middle: Controls */}
-        <div className="flex items-center">
+        <div className="flex items-center gap-5">
+          <button
+            onClick={onPrevSentence}
+            disabled={!hasPrevSentence}
+            title="上一句（←）"
+            className="text-gray-400 hover:text-blue-500 transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-gray-400"
+          >
+            <ChevronLeft size={26} />
+          </button>
           <button 
             onClick={togglePlay}
             className="w-14 h-14 bg-gray-900 text-white rounded-full flex items-center justify-center shadow-xl shadow-gray-900/20 hover:scale-105 active:scale-95 transition-all"
@@ -233,6 +323,14 @@ export const BottomPlayer = React.forwardRef<BottomPlayerRef, {
             ) : (
               <Play size={28} className="fill-current ml-1" />
             )}
+          </button>
+          <button
+            onClick={onNextSentence}
+            disabled={!hasNextSentence}
+            title="下一句（→）"
+            className="text-gray-400 hover:text-blue-500 transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-gray-400"
+          >
+            <ChevronRight size={26} />
           </button>
         </div>
 

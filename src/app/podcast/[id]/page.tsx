@@ -51,6 +51,9 @@ function PodcastDetailContent() {
   const playerRef = useRef<BottomPlayerRef>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [favoriteRefreshKey, setFavoriteRefreshKey] = useState(0);
+  // 单句循环：loopEnabled 开关 + loopCount（-1 = 无限，1 = 播这一句后停在句尾，2~5 = 跟读遍数）
+  const [loopEnabled, setLoopEnabled] = useState(false);
+  const [loopCount, setLoopCount] = useState(2);
 
   const parseTimeToSeconds = (timeStr: string): number => {
     const parts = timeStr.split(":").map(Number);
@@ -300,6 +303,16 @@ function PodcastDetailContent() {
 
   const lines = podcast?.segments ?? [];
 
+  // 句子边界（秒）：用于单句循环判断「到句尾」。end = 下一句起点，末句用音频总时长。
+  const sentenceBoundaries = useMemo<{ start: number; end: number }[]>(() => {
+    const segs = podcast?.segments ?? [];
+    const dur = parseTimeToSeconds(String(podcast?.duration ?? 0));
+    return segs.map((seg, i) => ({
+      start: parseTimeToSeconds(seg.start),
+      end: i + 1 < segs.length ? parseTimeToSeconds(segs[i + 1].start) : dur,
+    }));
+  }, [podcast]);
+
   const handleFavoriteCurrent = async () => {
     if (!currentFavoritePayload) {
       setToastMessage("当前没有可收藏的句子。");
@@ -351,6 +364,20 @@ function PodcastDetailContent() {
       if (event.key === "Enter") {
         event.preventDefault();
         handleFavoriteCurrent();
+        return;
+      }
+
+      // 上一句 / 下一句：左右箭头。精听时常用，且 transcription 会自动滚动跟随。
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        navRef.current.prev();
+        return;
+      }
+
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        navRef.current.next();
+        return;
       }
     };
 
@@ -395,6 +422,52 @@ function PodcastDetailContent() {
   const handleSeekFromTranscript = (time: string) => {
     playerRef.current?.seek(time);
   };
+
+  // —— 上一句 / 下一句 导航 ——
+  // activeIndex 由播放进度实时推导，所以点「下一句」就是 seek 到目标句起点，
+  // Transcription 会跟着 activeIndex 自动高亮 + scrollIntoView。
+  const goToSentence = (targetIndex: number) => {
+    const segs = podcast?.segments ?? [];
+    if (!segs.length) {
+      return;
+    }
+    const clamped = Math.max(0, Math.min(targetIndex, segs.length - 1));
+    playerRef.current?.seek(segs[clamped].start);
+  };
+
+  const goToPrevSentence = () => {
+    const base = activeIndex >= 0 ? activeIndex : 0;
+    goToSentence(base - 1);
+  };
+
+  const goToNextSentence = () => {
+    // activeIndex 为 -1（还没播到第一句）时，下一句应跳到第一句
+    const base = activeIndex >= 0 ? activeIndex : -1;
+    goToSentence(base + 1);
+  };
+
+  // 键盘快捷键（左右箭头）通过 ref 拿最新闭包，避免 window 监听者过期
+  const navRef = useRef<{ prev: () => void; next: () => void }>({
+    prev: () => {},
+    next: () => {},
+  });
+  useEffect(() => {
+    navRef.current = { prev: goToPrevSentence, next: goToNextSentence };
+  });
+
+  const prevSentenceDisabled = useMemo(() => {
+    if (!podcast || podcast.segments.length === 0) {
+      return true;
+    }
+    return activeIndex <= 0;
+  }, [podcast, activeIndex]);
+
+  const nextSentenceDisabled = useMemo(() => {
+    if (!podcast || podcast.segments.length === 0) {
+      return true;
+    }
+    return activeIndex >= podcast.segments.length - 1;
+  }, [podcast, activeIndex]);
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden font-sans">
@@ -475,6 +548,17 @@ function PodcastDetailContent() {
               onCopyResult={setToastMessage}
               onFavoriteCurrent={handleFavoriteCurrent}
               isCurrentFavorited={isCurrentFavorited}
+              onPrevSentence={goToPrevSentence}
+              onNextSentence={goToNextSentence}
+              hasPrevSentence={!prevSentenceDisabled}
+              hasNextSentence={!nextSentenceDisabled}
+              loopEnabled={loopEnabled}
+              loopCount={loopCount}
+              onToggleLoop={() => setLoopEnabled((value) => !value)}
+              onChangeLoopCount={setLoopCount}
+              onLoopFinished={() => setLoopEnabled(false)}
+              sentenceBoundaries={sentenceBoundaries}
+              activeIndex={activeIndex}
             />
           </>
         )}
