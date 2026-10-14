@@ -43,3 +43,11 @@ split_auto*_result.json
 podcast-asr-test/*.mp3
 podcast-asr-test/*.m4a
 podcast-asr-test/*.wav
+/dist/
+.vinext/
+.cloudflare/
+.wrangler/
+
+# Cloudflare 本地开发变量文件（wrangler / vinext 都会读它）。
+# 内容是明文密钥，与 .env 同级敏感 —— 必须忽略。
+.dev.vars
