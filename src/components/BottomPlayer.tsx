@@ -71,6 +71,27 @@ export const BottomPlayer = React.forwardRef<BottomPlayerRef, {
   // 开循环或切到新句子时，把锚点钉到 activeIndex 并重置遍数。
   const loopAnchorRef = useRef<number>(-1);
   const loopPlaysRef = useRef<number>(0);
+
+  // handleTimeUpdate 的 effect deps 没列入循环相关 props，会闭包到初次挂载的旧值。
+  // 用 propsRef 把最新值每次 render 都写一次，handler 内部统一读 ref，避免 stale state。
+  const loopPropsRef = useRef({
+    loopEnabled,
+    loopCount,
+    sentenceBoundaries,
+    hasNextSentence,
+    onNextSentence,
+    onLoopFinished,
+  });
+  useEffect(() => {
+    loopPropsRef.current = {
+      loopEnabled,
+      loopCount,
+      sentenceBoundaries,
+      hasNextSentence,
+      onNextSentence,
+      onLoopFinished,
+    };
+  });
   useEffect(() => {
     loopAnchorRef.current = loopEnabled && activeIndex >= 0 ? activeIndex : -1;
     loopPlaysRef.current = 0;
@@ -119,22 +140,30 @@ export const BottomPlayer = React.forwardRef<BottomPlayerRef, {
       setCurrentTime(time);
       onTimeUpdate?.(time);
 
-      // 单句循环：播放到句尾时，回到句首重播（有限遍数播完则停在句尾并关循环）。
-      if (loopEnabled && loopAnchorRef.current >= 0 && !audio.paused) {
-        const boundary = sentenceBoundaries?.[loopAnchorRef.current];
+      // 单句循环：播放到句尾时，回到句首重播（有限遍数播完则自动跳到下一句继续，
+      // 末句则停在句尾并停掉循环）。所有循环相关值都从 propsRef 读，避开 stale closure。
+      const lp = loopPropsRef.current;
+      if (lp.loopEnabled && loopAnchorRef.current >= 0 && !audio.paused) {
+        const boundary = lp.sentenceBoundaries?.[loopAnchorRef.current];
         if (boundary && time >= boundary.end - 0.06) {
           const completed = loopPlaysRef.current + 1;
-          if (loopCount === -1) {
+          if (lp.loopCount === -1) {
             loopPlaysRef.current = completed;
             audio.currentTime = boundary.start;
-          } else if (completed < loopCount) {
+          } else if (completed < lp.loopCount) {
             loopPlaysRef.current = completed;
             audio.currentTime = boundary.start;
           } else {
-            loopPlaysRef.current = completed;
+            // 这句循环已播够 N 遍：先把 anchor 临时置 -1，避免 useEffect 还没跑、
+            // 旧句尾跨进下一句时又被触发；然后跳下一句让循环接力。
+            loopPlaysRef.current = 0;
             loopAnchorRef.current = -1;
-            audio.pause();
-            onLoopFinished?.();
+            if (lp.hasNextSentence && lp.onNextSentence) {
+              lp.onNextSentence();
+            } else {
+              audio.pause();
+              lp.onLoopFinished?.();
+            }
           }
         }
       }
@@ -256,7 +285,7 @@ export const BottomPlayer = React.forwardRef<BottomPlayerRef, {
         />
       </div>
 
-      <div className="flex items-center justify-between mt-2">
+      <div className="flex items-center justify-between mt-2 relative">
         {/* Left: Actions */}
         <div className="flex items-center gap-6 text-gray-400">
           <div className="text-[10px] font-bold font-mono min-w-8">{formatTime(currentTime)}</div>
@@ -304,8 +333,8 @@ export const BottomPlayer = React.forwardRef<BottomPlayerRef, {
           </div>
         </div>
 
-        {/* Middle: Controls */}
-        <div className="flex items-center gap-5">
+        {/* Middle: Controls - 绝对居中，跟左侧循环次数按钮的宽度互不影响 */}
+        <div className="flex items-center gap-5 absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
           <button
             onClick={onPrevSentence}
             disabled={!hasPrevSentence}
