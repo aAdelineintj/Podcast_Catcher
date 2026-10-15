@@ -20,6 +20,7 @@ import subprocess
 import sys
 import time
 import traceback
+from datetime import datetime, timezone
 
 # worker/ 是 backend/ 的子目录，而 backend/ 不是一个包（没有 __init__.py），
 # 所以 `from .. import pipeline` 走不通。直接把 backend/ 塞进 sys.path 最省事。
@@ -151,32 +152,132 @@ def compress_and_replace(
 
 
 # ══════════════════════════════════════════════════════════════════════
+#  远程音频获取（RSS 导入）
+# ══════════════════════════════════════════════════════════════════════
+
+# 浏览器化 UA：部分播主 CDN 会拦默认 UA
+_REMOTE_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+)
+
+_AUDIO_EXT_MIME = {
+    ".mp3": "audio/mpeg",
+    ".m4a": "audio/mp4",
+    ".wav": "audio/wav",
+    ".aac": "audio/aac",
+    ".ogg": "audio/ogg",
+    ".flac": "audio/flac",
+    ".mp4": "audio/mp4",
+}
+
+
+def _sniff_audio_ext(path: str) -> str:
+    """按文件头推断音频扩展名。认不出就回落到 .mp3。"""
+    with open(path, "rb") as file_obj:
+        head = file_obj.read(16)
+    if head[:3] == b"ID3" or head[:2] in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"):
+        return ".mp3"
+    if head[4:8] == b"ftyp":
+        return ".m4a"
+    if head[:4] == b"RIFF" and head[8:12] == b"WAVE":
+        return ".wav"
+    if head[:4] == b"OggS":
+        return ".ogg"
+    if head[:4] == b"fLaC":
+        return ".flac"
+    return ".mp3"
+
+
+def _download_remote_audio(url: str, dest_path: str) -> None:
+    """用 curl 下载远程音频到本地文件。
+
+    为什么不直接用 requests：本机有 TLS 中间人代理，Python 的 requests 校验证书会失败，
+    而 curl 走系统 CA bundle 能正常通过。worker 里 ffmpeg 也是走 subprocess，
+    这里保持一致。
+    """
+    result = subprocess.run(
+        [
+            "curl", "-L", "--fail", "-s", "--max-time", "1800",
+            "-A", _REMOTE_UA,
+            url, "-o", dest_path,
+        ],
+        capture_output=True,
+        timeout=1900,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", "replace").strip()[:300]
+        raise RuntimeError(f"远程音频下载失败（curl 退出码 {result.returncode}）：{detail}")
+    if not os.path.exists(dest_path) or os.path.getsize(dest_path) == 0:
+        raise RuntimeError("远程音频下载为空，无法继续。")
+
+
+def resolve_audio(
+    client: SupabaseClient, podcast_id: str, job: dict, work_dir: str
+) -> tuple[str, str]:
+    """拿到本地音频文件路径与其在 Storage 里的对象路径。
+
+    返回 (local_audio, audio_path)。audio_path 一定是 Storage 对象路径，
+    后续步骤（转写 / 压缩回存）都基于它，逻辑与本地上传完全一致。
+    """
+    audio_path = job.get("audio_path")
+
+    # 情形 A：音频已在 Storage（本地上传 / 上一轮已回存）
+    if audio_path:
+        local_audio = os.path.join(work_dir, "source" + os.path.splitext(audio_path)[1])
+        with open(local_audio, "wb") as file_obj:
+            file_obj.write(client.download_object(audio_path))
+        return local_audio, audio_path
+
+    # 情形 B：RSS 导入的远程音频直链
+    source_url = job.get("source_audio_url")
+    if source_url:
+        tmp_path = os.path.join(work_dir, "source.bin")
+        _download_remote_audio(source_url, tmp_path)
+        ext = _sniff_audio_ext(tmp_path)
+        local_audio = os.path.join(work_dir, "source" + ext)
+        os.replace(tmp_path, local_audio)
+
+        new_path = f"{podcast_id}{ext}"
+        with open(local_audio, "rb") as file_obj:
+            client.upload_object(
+                new_path, file_obj.read(),
+                content_type=_AUDIO_EXT_MIME.get(ext, "audio/mpeg"),
+            )
+        # 回填：之后认领 / 播放都按 Storage 对象走，与本地上传同一套口径
+        patch_podcast(
+            client, podcast_id,
+            audio_path=new_path,
+            audio_uploaded_at=datetime.now(timezone.utc).isoformat(),
+        )
+        return local_audio, new_path
+
+    raise RuntimeError("podcasts.audio_path 与 source_audio_url 都为空，无法获取音频")
+
+
+# ══════════════════════════════════════════════════════════════════════
 #  单集处理
 # ══════════════════════════════════════════════════════════════════════
 
 def process(client: SupabaseClient, job: dict) -> None:
     podcast_id = job["id"]
     source_language = pipeline.normalize_source_language(job.get("source_language"))
-    audio_path = job.get("audio_path")
 
     print(
         f"[{podcast_id}] 开始处理：{job.get('title')!r} "
-        f"(source_language={source_language}, audio={audio_path})"
+        f"(source_language={source_language}, "
+        f"audio={job.get('audio_path') or job.get('source_audio_url')})"
     )
-
-    if not audio_path:
-        raise RuntimeError("podcasts.audio_path 为空，无法下载音频")
 
     work_dir = os.path.join(config.WORKER_TMP_DIR, podcast_id)
     os.makedirs(work_dir, exist_ok=True)
-    local_audio = os.path.join(work_dir, "source" + os.path.splitext(audio_path)[1])
 
     try:
-        # ── 1. 下载音频 ──────────────────────────────────────────────
-        print(f"[{podcast_id}] 1/6 下载音频…")
-        with open(local_audio, "wb") as file_obj:
-            file_obj.write(client.download_object(audio_path))
-        print(f"[{podcast_id}]      {os.path.getsize(local_audio) / 1e6:.1f}MB")
+        # ── 1. 获取音频 ──────────────────────────────────────────────
+        # Storage 里的音频 → 直接下；远程 RSS 音频 → 先下载再回存 Storage。
+        print(f"[{podcast_id}] 1/6 获取音频…")
+        local_audio, audio_path = resolve_audio(client, podcast_id, job, work_dir)
+        print(f"[{podcast_id}]      {os.path.getsize(local_audio) / 1e6:.1f}MB → {audio_path}")
 
         # ── 2. 转写 ─────────────────────────────────────────────────
         print(f"[{podcast_id}] 2/6 转写（Whisper {whisper_asr.DEFAULT_MODEL}，本地 CPU）…")

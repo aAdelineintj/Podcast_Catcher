@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { FileSearch, RefreshCw, Upload } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
 import { Header } from "@/components/Header";
+import { ImportLinkModal } from "@/components/ImportLinkModal";
 import { FavoritesView } from "@/components/FavoritesView";
 import {
   cachePodcastItem,
@@ -37,6 +38,8 @@ function HomeContent() {
   const [sourceLanguage, setSourceLanguage] = useState<SourceLanguage>(DEFAULT_SOURCE_LANGUAGE);
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // 「导入链接」弹窗的开合状态：解析入口在 Header 右上角
+  const [importLinkOpen, setImportLinkOpen] = useState(false);
   // 云端同步失败单独记一份：它和「上传失败」的成因完全不同
   // （一个是网络/服务端，一个是文件本身），混在一起会误导排查方向
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -189,6 +192,7 @@ function HomeContent() {
             mode="import"
             title=""
             onUploadClick={handleUploadClick}
+            onImportLinkClick={() => setImportLinkOpen(true)}
             isProcessing={isProcessing}
             sourceLanguage={sourceLanguage}
             onSourceLanguageChange={handleSourceLanguageChange}
@@ -259,6 +263,14 @@ function HomeContent() {
           </div>
         )}
       </main>
+
+      {importLinkOpen && (
+        <ImportLinkModal
+          onClose={() => setImportLinkOpen(false)}
+          onImported={() => void refreshHistory()}
+          defaultSourceLanguage={sourceLanguage}
+        />
+      )}
     </div>
   );
 }

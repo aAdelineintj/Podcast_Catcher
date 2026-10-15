@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Upload, Loader2, Pencil, Check, X } from "lucide-react";
+import { Upload, Loader2, Pencil, Check, X, Link2 } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import type { SourceLanguage } from "@/types/podcast";
@@ -15,6 +15,7 @@ export const Header = ({
   title, 
   subtitle,
   onUploadClick,
+  onImportLinkClick,
   isProcessing = false,
   editableTitle = false,
   onSaveTitle,
@@ -25,6 +26,7 @@ export const Header = ({
   title?: string,
   subtitle?: string,
   onUploadClick?: () => void,
+  onImportLinkClick?: () => void,
   isProcessing?: boolean,
   editableTitle?: boolean,
   onSaveTitle?: (title: string) => void,
@@ -152,6 +154,14 @@ export const Header = ({
               })}
             </div>
           )}
+
+          <button
+            onClick={onImportLinkClick}
+            className="flex items-center gap-2 px-5 py-2.5 bg-white text-blue-600 border border-blue-200 rounded-full font-bold text-xs transition-all hover:bg-blue-50 active:scale-[0.98]"
+          >
+            <Link2 size={16} strokeWidth={3} />
+            <span>导入链接</span>
+          </button>
 
           <button 
             onClick={onUploadClick}

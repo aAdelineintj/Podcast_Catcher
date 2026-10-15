@@ -410,7 +410,10 @@ function PodcastDetailContent() {
       // 本地拼的版本会和服务端产生不一致。
       const updated = await renamePodcast(podcast.id, title);
       podcastRef.current = updated;
-      setPodcast(updated);
+      // 只取服务端的新标题，其余字段（segments / status / stage / progress）
+      // 原封不动 —— 改名和转写是两条互不影响的路径。不整条覆盖，
+      // 就是为了不把已有的字幕/进度闪一下清掉（即使 PATCH 返回值漏了 segments）。
+      setPodcast((prev) => (prev ? { ...prev, title: updated.title } : updated));
       setHistoryItems(loadPodcastHistory());
       setFavoriteRefreshKey((value) => value + 1);
       setToastMessage("已更新当前播客标题。");

@@ -47,6 +47,10 @@ create table if not exists public.podcasts (
   --    认领函数要求它非空，所以上传中断的任务永远不会被 worker 误领。
   audio_uploaded_at      timestamptz,
 
+  -- RSS 导入的远程音频直链：本地上传时为 NULL。
+  -- 非空时认领函数也会认领它，由 worker 下载远程音频、转写、再回存 Storage。
+  source_audio_url      text,
+
   -- worker 认领状态
   locked_by              text,
   locked_at              timestamptz,
@@ -77,6 +81,32 @@ alter table public.podcasts
 alter table public.podcasts
   add  constraint podcasts_audio_upload_consistent
        check (audio_uploaded_at is null or audio_path is not null);
+
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- 1b. RSS 导入支持（阶段三新增，可重复执行）
+--
+--     `source_audio_url` 是 RSS 导入的远程音频直链。本地上传流程不涉及、保持 NULL；
+--     RSS 导入时写入，认领函数据此认领，worker 下载远程音频后回存 Storage。
+--
+--     ⚠️ 已建过表的库要单独跑这一段（create table if not exists 不会给已存在的表加列）。
+--        直接整段粘贴即可，全部 if not exists / drop if exists，跑几次都安全。
+-- ───────────────────────────────────────────────────────────────────────────
+
+alter table public.podcasts
+  add column if not exists source_audio_url text;
+
+-- 认领索引也要覆盖「source_audio_url 非空」的行（原来的谓词只认 audio_uploaded_at）
+drop index if exists podcasts_claim_idx;
+create index if not exists podcasts_claim_idx
+  on public.podcasts (status, created_at)
+  where (audio_uploaded_at is not null or source_audio_url is not null);
+
+-- 同一集重复导入时天然幂等：靠这个部分唯一索引去重。
+-- import 接口会先查后插，这里兜底极端竞态（同一集同时点多下）。
+create unique index if not exists podcasts_source_audio_url_key
+  on public.podcasts (source_audio_url)
+  where source_audio_url is not null;
 
 
 -- ───────────────────────────────────────────────────────────────────────────
@@ -200,7 +230,7 @@ as $$
   with candidate as (
     select id
       from public.podcasts
-     where audio_uploaded_at is not null
+     where (audio_uploaded_at is not null or source_audio_url is not null)
        and attempts < 3
        and (
              status = 'queued'

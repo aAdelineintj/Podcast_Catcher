@@ -83,7 +83,18 @@ export async function PATCH(
       throw new NotFoundError("没有找到这条播客记录，无法修改标题。");
     }
 
-    return NextResponse.json({ podcast: toStoredPodcast(updated[0]) });
+    // 改名只动 title 一列，绝不影响转写进度。但返回值必须把字幕也带上——
+    // 否则前端拿到 segments=[] 会瞬间清空字幕、回退到「处理中」占位卡片，
+    // 用户就会误以为改名把文稿「重新处理」了一遍。这里与 GET 接口对齐。
+    const segmentRows = await selectRows<SegmentRow>("segments", {
+      podcast_id: `eq.${id}`,
+      select: SEGMENT_SELECT,
+      order: "idx.asc",
+    });
+
+    return NextResponse.json({
+      podcast: toStoredPodcast(updated[0], segmentRows.map(toTranscriptSegment)),
+    });
   } catch (error) {
     return jsonError(error, "修改标题失败。");
   }
