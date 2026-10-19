@@ -9,6 +9,7 @@ import { ImportLinkModal } from "@/components/ImportLinkModal";
 import { FavoritesView } from "@/components/FavoritesView";
 import {
   cachePodcastItem,
+  deletePodcast,
   fetchPodcastHistory,
   loadPodcastHistory,
 } from "@/lib/podcast-history";
@@ -164,6 +165,17 @@ function HomeContent() {
     router.push("/?view=favorites");
   };
 
+  const handleDeletePodcast = async (id: string) => {
+    try {
+      await deletePodcast(id);
+      setHistoryItems((prev) => prev.filter((item) => item.id !== id));
+      // 该集的收藏句子已在服务端删掉，顺手把收藏缓存同步成最新
+      void refreshFavorites();
+    } catch (error) {
+      setSyncError(error instanceof Error ? error.message : "删除播客失败。");
+    }
+  };
+
   const handleNavigateToPodcast = (podcastId: string, start: string) => {
     router.push(`/podcast/${podcastId}?t=${start}`);
   };
@@ -176,6 +188,7 @@ function HomeContent() {
         onSelectNowPlaying={handleSelectNowPlaying}
         onSelectHistory={handleSelectHistory}
         onSelectFavorites={handleSelectFavorites}
+        onDeletePodcast={handleDeletePodcast}
       />
 
       <input

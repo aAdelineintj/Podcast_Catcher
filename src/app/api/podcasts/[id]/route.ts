@@ -129,10 +129,18 @@ export async function DELETE(
       }
     }
 
+    // 先把这集的收藏句子一并删掉：favorites.podcast_id 是 on delete set null，
+    // 若先删 podcast 行，收藏的 podcast_id 会被置空、就再也按 id 匹配不到了。
+    // 所以顺序必须是「先删 favorites，再删 podcast」。
+    const removedFavorites = await deleteRows<{ id: string }>("favorites", {
+      podcast_id: `eq.${id}`,
+    });
+    const favoritesDeleted = removedFavorites.length;
+
     // segments 靠外键 on delete cascade 一起清掉
     await deleteRows("podcasts", { id: `eq.${id}` });
 
-    return NextResponse.json({ deleted: true, audioDeleted });
+    return NextResponse.json({ deleted: true, audioDeleted, favoritesDeleted });
   } catch (error) {
     return jsonError(error, "删除播客失败。");
   }

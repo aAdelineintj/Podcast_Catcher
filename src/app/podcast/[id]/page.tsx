@@ -8,6 +8,7 @@ import { Header } from "@/components/Header";
 import { Transcription } from "@/components/Transcription";
 import { BottomPlayer, type BottomPlayerRef } from "@/components/BottomPlayer";
 import {
+  deletePodcast,
   fetchPodcastDetail,
   loadPodcastHistory,
   renamePodcast,
@@ -15,6 +16,7 @@ import {
 import {
   buildFavoriteId,
   createPodcastFavorite,
+  fetchPodcastFavorites,
   hasPodcastFavorite,
 } from "@/lib/podcast-favorites";
 import { ApiError } from "@/lib/api";
@@ -400,6 +402,21 @@ function PodcastDetailContent() {
     router.push("/?view=favorites");
   };
 
+  const handleDeletePodcast = async (id: string) => {
+    try {
+      await deletePodcast(id);
+      setHistoryItems((prev) => prev.filter((item) => item.id !== id));
+      // 该集的收藏句子已在服务端删掉，顺手把收藏缓存同步成最新
+      void fetchPodcastFavorites();
+      // 删掉当前正在看的一集 → 跳回默认首页
+      if (podcastId === id) {
+        router.push("/");
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "删除播客失败。");
+    }
+  };
+
   const handleSavePodcastTitle = async (title: string) => {
     if (!podcast) {
       return;
@@ -482,6 +499,7 @@ function PodcastDetailContent() {
         onSelectNowPlaying={handleSelectNowPlaying}
         onSelectHistory={handleSelectHistory}
         onSelectFavorites={handleSelectFavorites}
+        onDeletePodcast={handleDeletePodcast}
       />
 
       <main className="flex-1 flex flex-col min-w-0 bg-white relative z-0 shadow-2xl">

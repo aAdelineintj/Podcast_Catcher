@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Headphones, Heart, MessageSquare } from "lucide-react";
+import { Headphones, Heart, MessageSquare, Trash2 } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import type { StoredPodcast } from "@/types/podcast";
@@ -23,7 +23,8 @@ export const Sidebar = ({
   historyItems = [],
   onSelectNowPlaying,
   onSelectHistory,
-  onSelectFavorites
+  onSelectFavorites,
+  onDeletePodcast
 }: { 
   activeTab?: string;
   selectedPodcastId?: string | null;
@@ -31,6 +32,7 @@ export const Sidebar = ({
   onSelectNowPlaying?: () => void;
   onSelectHistory?: (podcast: StoredPodcast) => void;
   onSelectFavorites?: () => void;
+  onDeletePodcast?: (id: string) => void;
 }) => {
   return (
     <aside className="w-64 border-r border-gray-100 flex flex-col h-screen bg-white">
@@ -68,6 +70,7 @@ export const Sidebar = ({
                 item={item}
                 active={selectedPodcastId === item.id && activeTab === "now-playing"}
                 onClick={() => onSelectHistory?.(item)}
+                onDelete={onDeletePodcast}
               />
             ))}
             {historyItems.length === 0 && (
@@ -104,10 +107,11 @@ export const Sidebar = ({
   );
 };
 
-const HistoryCard = ({ item, active = false, onClick }: { 
+const HistoryCard = ({ item, active = false, onClick, onDelete }: { 
   item: any; 
   active?: boolean;
   onClick: () => void;
+  onDelete?: (id: string) => void;
 }) => {
   // 格式化日期逻辑
   const formattedDate = React.useMemo(() => {
@@ -121,11 +125,50 @@ const HistoryCard = ({ item, active = false, onClick }: {
     }
   }, [item.date]);
 
+  // 删除确认气泡：默认收起，点击删除图标展开，点空白 / 取消收起
+  const [confirming, setConfirming] = React.useState(false);
+  const popoverRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (!confirming) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (popoverRef.current && !popoverRef.current.contains(event.target as Node)) {
+        setConfirming(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setConfirming(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [confirming]);
+
+  const handleDeleteClick = (event: React.MouseEvent) => {
+    // 别触发卡片的「跳去详情页」点击
+    event.stopPropagation();
+    setConfirming((value) => !value);
+  };
+
+  const handleConfirm = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    setConfirming(false);
+    onDelete?.(item.id);
+  };
+
+  const handleCancel = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    setConfirming(false);
+  };
+
   return (
     <div 
       onClick={onClick}
       className={cn(
-        "p-4 rounded-2xl cursor-pointer transition-all border-2",
+        "relative p-4 rounded-2xl cursor-pointer transition-all border-2",
         active ? "border-blue-500 bg-white shadow-md shadow-blue-500/5" : "border-transparent hover:bg-gray-50"
       )}
     >
@@ -135,15 +178,61 @@ const HistoryCard = ({ item, active = false, onClick }: {
       )}>
         {item.title}
       </h4>
-      <div className="flex items-center gap-3 text-[10px] font-medium text-gray-400">
-        <span>{formattedDate}</span>
-        <span>•</span>
-        <span>{item.duration}</span>
-        {item.status !== "success" && (
-          <>
-            <span>•</span>
-            <span>{item.stage}</span>
-          </>
+      <div className="flex items-center justify-between gap-2 text-[10px] font-medium text-gray-400">
+        <div className="flex items-center gap-2 min-w-0">
+          <span>{formattedDate}</span>
+          <span>•</span>
+          <span>{item.duration}</span>
+          {item.status !== "success" && (
+            <>
+              <span>•</span>
+              <span>{item.stage}</span>
+            </>
+          )}
+        </div>
+
+        {/* 只支持删除已转写成功的播客，避免产生孤儿数据 */}
+        {item.status === "success" && (
+          <div className="relative shrink-0" ref={popoverRef}>
+            <button
+              type="button"
+              aria-label="删除这集播客"
+              onClick={handleDeleteClick}
+              className="p-1 rounded-md text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+            >
+              <Trash2 size={14} />
+            </button>
+
+            {confirming && (
+              <div
+                onClick={(event) => event.stopPropagation()}
+                className="absolute right-0 bottom-full mb-2 z-50 w-44 rounded-xl border border-gray-200 bg-white p-3 shadow-xl"
+              >
+                <p className="text-xs font-semibold text-gray-700 mb-1 leading-snug">
+                  确定删除这集播客？
+                </p>
+                <p className="text-[10px] text-gray-400 mb-3 leading-snug">
+                  该集及其收藏句子都会被删除。
+                </p>
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCancel}
+                    className="px-2.5 py-1 rounded-md text-[11px] font-medium text-gray-500 hover:bg-gray-100 transition-colors"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirm}
+                    className="px-2.5 py-1 rounded-md text-[11px] font-bold text-white bg-red-500 hover:bg-red-600 transition-colors"
+                  >
+                    确定
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         )}
       </div>
     </div>
