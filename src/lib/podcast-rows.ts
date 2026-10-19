@@ -91,7 +91,7 @@ export const FAVORITE_SELECT = [
 //  语种
 // ══════════════════════════════════════════════════════════════════════
 
-export const SOURCE_LANGUAGES = ["auto", "fr", "en"] as const;
+export const SOURCE_LANGUAGES = ["auto", "fr", "en", "zh", "zh_en"] as const;
 
 /**
  * 把任意输入收敛到合法语种。

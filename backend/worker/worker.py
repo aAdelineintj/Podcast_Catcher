@@ -196,9 +196,11 @@ def _download_remote_audio(url: str, dest_path: str) -> None:
     而 curl 走系统 CA bundle 能正常通过。worker 里 ffmpeg 也是走 subprocess，
     这里保持一致。
     """
+    # --noproxy '*'：curl 也会读 http_proxy/https_proxy 环境变量。若 worker 从带
+    # 沙箱代理的 shell 启动，代理一旦退出，远程音频会失败。直连即可（本机出网正常）。
     result = subprocess.run(
         [
-            "curl", "-L", "--fail", "-s", "--max-time", "1800",
+            "curl", "-L", "--fail", "-s", "--max-time", "1800", "--noproxy", "*",
             "-A", _REMOTE_UA,
             url, "-o", dest_path,
         ],
@@ -293,11 +295,20 @@ def process(client: SupabaseClient, job: dict) -> None:
                 progress=min(progress, PROGRESS_TRANSCRIBE_END),
             )
 
+        def on_transcribe_retry(attempt_language: str) -> None:
+            print(f"[{podcast_id}]     重试：换语种={attempt_language}")
+            patch_podcast(
+                client, podcast_id,
+                stage="retrying",
+                progress=PROGRESS_TRANSCRIBE_START,
+            )
+
         rows = whisper_asr.transcribe_audio(
             local_audio,
             whisper_asr.get_model(),
             source_language=source_language,
             on_progress=on_transcribe_progress,
+            on_retry=on_transcribe_retry,
         )
 
         if source_language == "auto":
@@ -357,7 +368,11 @@ def process(client: SupabaseClient, job: dict) -> None:
                 upsert_segments(client, podcast_id, segments)
                 flushed = done_count
 
-        pipeline.translate_segments(segments, on_progress=on_translate_progress)
+        pipeline.translate_segments(
+            segments,
+            on_progress=on_translate_progress,
+            target_lang=pipeline.baidu_target_for_source(source_language),
+        )
 
         # ── 5. 收尾回写 ─────────────────────────────────────────────
         upsert_segments(client, podcast_id, segments)

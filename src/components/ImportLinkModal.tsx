@@ -36,6 +36,8 @@ type ImportSuccess = {
 const LANGUAGE_OPTIONS: { value: SourceLanguage; label: string }[] = [
   { value: "fr", label: "法语" },
   { value: "en", label: "英语" },
+  { value: "zh", label: "中文" },
+  { value: "zh_en", label: "中英混合" },
   { value: "auto", label: "自动" },
 ];
 

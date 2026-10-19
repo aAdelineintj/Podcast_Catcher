@@ -74,12 +74,26 @@ SOURCE_LANGUAGE_ALIASES = {
     "eng": "en",
     "english": "en",
     "英语": "en",
+    # 中文 / 中英混合（选语种改造 P0-1）
+    "zh": "zh",
+    "zh_cn": "zh",
+    "cmn": "zh",
+    "chinese": "zh",
+    "中文": "zh",
+    "zh_en": "zh_en",
+    "zh-en": "zh_en",
+    "中英": "zh_en",
+    "中英混合": "zh_en",
+    "mixed": "zh_en",
 }
 
 BAIDU_LANGUAGE_BY_SOURCE = {
     "auto": "auto",
     "fr": "fra",
     "en": "en",
+    # zh 源按中文翻译；zh_en 走逐句检测（见 build_segments）
+    "zh": "zh",
+    "zh_en": "auto",
 }
 
 
@@ -90,6 +104,20 @@ def normalize_source_language(value: str | None) -> str:
 
 def baidu_language_for_source(source_language: str) -> str:
     return BAIDU_LANGUAGE_BY_SOURCE.get(normalize_source_language(source_language), "auto")
+
+
+# 译文目标语言：默认全走中文（zh），与历史行为一致。
+# 仅当产品确认「中文源应译英」时，把 "zh" 映射改成 "en" 即可（一处生效，无需动调用方）。
+# zh_en 保持 zh：其中英文句由 build_segments 的逐句检测分支标为 en，
+# 走 from_lang=en / to_lang=zh 翻译成中文，中文句则原样保留。
+BAIDU_TARGET_BY_SOURCE = {
+    "zh_en": "zh",
+}
+
+
+def baidu_target_for_source(source_language: str) -> str:
+    """根据源语种返回译文目标语言，默认 zh（保持历史行为）。"""
+    return BAIDU_TARGET_BY_SOURCE.get(normalize_source_language(source_language), "zh")
 
 
 # ---------------------------------------------------------------- 翻译限速与批量
@@ -304,7 +332,7 @@ def build_segments(
         start_seconds = float(row.get("start", 0.0))
         end_seconds = float(row.get("end", start_seconds))
 
-        if source_language == "auto":
+        if source_language in ("auto", "zh_en"):
             detected_lang, detection_reason = detect_segment_language(original_text)
             if detected_lang == "auto":
                 fallback = baidu_language_for_source(transcription_language)
@@ -333,6 +361,7 @@ def translate_segments(
     segments: list[dict],
     *,
     on_progress=None,
+    target_lang: str | None = None,
 ) -> int:
     """**就地**翻译 `segments`，返回已处理（含跳过）的句数。
 
@@ -373,11 +402,12 @@ def translate_segments(
     def run_batch(lang: str, batch: list[tuple[int, str]]) -> int:
         """翻译一个批次并回写 segments，返回写入的句数。"""
         texts = [text for _, text in batch]
+        to_lang = target_lang or "zh"
         try:
-            lines = baidu_translate_batch(texts, from_lang=lang)
+            lines = baidu_translate_batch(texts, from_lang=lang, to_lang=to_lang)
         except Exception as exc:  # noqa: BLE001
             print(f"[translate] 批次失败（{len(texts)} 句 / lang={lang}），降级逐句重试：{exc}")
-            lines = [baidu_translate(text, from_lang=lang) for text in texts]
+            lines = [baidu_translate(text, from_lang=lang, to_lang=to_lang) for text in texts]
 
         for (index, _), line in zip(batch, lines):
             segments[index]["translation"] = line

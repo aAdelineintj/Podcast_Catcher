@@ -74,6 +74,28 @@ BILINGUAL = os.getenv("WHISPER_BILINGUAL", "0").strip().lower() not in (
     "0", "false", "no", "",
 )
 
+# P0-3：异常短输出检测阈值（独立于语种，兜底"只出 1 句"类事故）。
+# 任一信号越界即判异常；异常且可重试时换语种重跑一遍。
+ANOMALY_MIN_DURATION_SEC = float(os.getenv("WHISPER_ANOMALY_MIN_DURATION_SEC", "30"))
+ANOMALY_MAX_NO_SPEECH = float(os.getenv("WHISPER_ANOMALY_MAX_NO_SPEECH", "0.85"))
+ANOMALY_MIN_COVERAGE = float(os.getenv("WHISPER_ANOMALY_MIN_COVERAGE", "0.15"))
+ANOMALY_MIN_LOGPROB = float(os.getenv("WHISPER_ANOMALY_MIN_LOGPROB", "-1.3"))
+ANOMALY_MAX_COMPRESSION = float(os.getenv("WHISPER_ANOMALY_MAX_COMPRESSION", "2.8"))
+# 关闭后异常只报错、不自动重试
+ANOMALY_RETRY_ENABLED = os.getenv("WHISPER_ANOMALY_RETRY", "1").strip().lower() not in (
+    "0", "false", "no", "",
+)
+
+# P0-2：auto 模式下多锚点语种预检（轻量版，不引入 P1 全量多锚点转写）。
+# 头/中/尾各取 30s 做一次 detect_language，明显是中文则提前强制 zh，
+# 省去 P0-3「整段塌缩 → 换语种重跑」的 2x 开销。P0-3 仍作兜底。
+WHISPER_AUTO_ZH_FALLBACK = os.getenv("WHISPER_AUTO_ZH_FALLBACK", "1").strip().lower() not in (
+    "0", "false", "no", "",
+)
+AUTO_ZH_MIN_PROB = float(os.getenv("WHISPER_AUTO_ZH_MIN_PROB", "0.6"))
+# P1：非中文锚点要「全一致且都高置信」才强制，避免盖掉 whisper 原生 auto
+AUTO_OTHER_MIN_PROB = float(os.getenv("WHISPER_AUTO_OTHER_MIN_PROB", "0.7"))
+
 _model = None
 _model_lock = threading.Lock()
 
@@ -152,7 +174,12 @@ def _chunk_ranges(audio: np.ndarray) -> list[tuple[int, int]]:
 # --------------------------------------------------------------------------
 
 def _transcribe_chunk(model, audio_slice: np.ndarray, language, offset_sec: float):
-    """转写一块音频，产出 (绝对起始秒, 绝对结束秒, 词文本)。"""
+    """转写一块音频，返回 (词列表, 本块质量指标)。
+
+    词列表为 [(绝对起始秒, 绝对结束秒, 词文本)]；
+    质量指标含 avg_logprob / no_speech_prob / compression_ratio / 有效语音时长，
+    供 P0-3 的异常短输出检测使用（详见 transcribe_audio）。
+    """
     result = model.transcribe(
         audio_slice,
         language=language,
@@ -170,7 +197,41 @@ def _transcribe_chunk(model, audio_slice: np.ndarray, language, offset_sec: floa
         # 进度由本模块按分块自行上报，不需要 whisper 自己再画一条。
         verbose=None,
     )
-    yield from _words_of(result, offset_sec)
+    return list(_words_of(result, offset_sec)), _chunk_metrics(result, offset_sec)
+
+
+def _chunk_metrics(result: dict, offset_sec: float = 0.0) -> dict:
+    """从 Whisper 的 segment 级结果聚合本块质量信号。"""
+    segments = result.get("segments") or []
+    if not segments:
+        return {
+            "mean_logprob": None,
+            "max_no_speech": 0.0,
+            "max_compression": 0.0,
+            "speech_sec": 0.0,
+            "language": result.get("language"),
+            "language_prob": result.get("language_probability"),
+        }
+
+    logprobs = [s["avg_logprob"] for s in segments if s.get("avg_logprob") is not None]
+    no_speech = [s["no_speech_prob"] for s in segments if s.get("no_speech_prob") is not None]
+    comps = [s["compression_ratio"] for s in segments if s.get("compression_ratio") is not None]
+
+    speech = 0.0
+    for s in segments:
+        if (s.get("no_speech_prob") or 0.0) < NO_SPEECH_THRESHOLD:
+            start, end = s.get("start"), s.get("end")
+            if start is not None and end is not None:
+                speech += max(0.0, float(end) - float(start))
+
+    return {
+        "mean_logprob": (sum(logprobs) / len(logprobs)) if logprobs else None,
+        "max_no_speech": max(no_speech) if no_speech else 0.0,
+        "max_compression": max(comps) if comps else 0.0,
+        "speech_sec": speech,
+        "language": result.get("language"),
+        "language_prob": result.get("language_probability"),
+    }
 
 
 def _words_of(result: dict, offset_sec: float = 0.0):
@@ -284,6 +345,157 @@ def _arbitrate(primary: list[dict], alt: list[dict]) -> list[dict]:
 
 
 # --------------------------------------------------------------------------
+# P0-3：异常短输出检测 + 条件重试
+# --------------------------------------------------------------------------
+
+def _aggregate_metrics(metrics_list: list[dict], audio_duration: float) -> dict:
+    """跨块聚合，得到整集级别的质量信号。"""
+    if not metrics_list:
+        return {
+            "mean_logprob": None,
+            "max_no_speech": 0.0,
+            "max_compression": 0.0,
+            "coverage": 0.0,
+            "language": None,
+            "language_prob": None,
+        }
+    mean_logprobs = [m["mean_logprob"] for m in metrics_list if m["mean_logprob"] is not None]
+    speech = sum(m["speech_sec"] for m in metrics_list)
+    langs = [m["language"] for m in metrics_list if m["language"]]
+    return {
+        "mean_logprob": (sum(mean_logprobs) / len(mean_logprobs)) if mean_logprobs else None,
+        "max_no_speech": max((m["max_no_speech"] for m in metrics_list), default=0.0),
+        "max_compression": max((m["max_compression"] for m in metrics_list), default=0.0),
+        "coverage": (speech / audio_duration) if audio_duration else 0.0,
+        "language": langs[0] if langs else None,
+        "language_prob": None,
+    }
+
+
+def assess_quality(metrics: dict, sentence_count: int, audio_total_sec: float):
+    """返回 (是否异常, 原因列表)。
+
+    判定独立于语种：既看 Whisper 自带的质量信号（置信度/静音/重复），
+    也看"句数相对时长是否离谱"——后者正是 5401 类"塌缩成 1 句"的直接特征。
+    不单看字数/分钟，避免把语速慢但正常的播客误杀。
+    """
+    reasons: list[str] = []
+    if sentence_count <= 1 and audio_total_sec > ANOMALY_MIN_DURATION_SEC:
+        reasons.append(f"句数过少({sentence_count}句/{audio_total_sec:.0f}s)")
+    cov = metrics.get("coverage") or 0.0
+    if audio_total_sec > 10 and cov < ANOMALY_MIN_COVERAGE:
+        reasons.append(f"语音覆盖率过低({cov:.0%})")
+    if metrics.get("max_no_speech", 0.0) > ANOMALY_MAX_NO_SPEECH:
+        reasons.append(f"多段被判静音(no_speech={metrics['max_no_speech']:.2f})")
+    lp = metrics.get("mean_logprob")
+    if lp is not None and lp < ANOMALY_MIN_LOGPROB:
+        reasons.append(f"置信度过低(avg_logprob={lp:.2f})")
+    if metrics.get("max_compression", 0.0) > ANOMALY_MAX_COMPRESSION:
+        reasons.append(f"重复循环(compression={metrics['max_compression']:.2f})")
+    return bool(reasons), reasons
+
+
+def _recovery_language(source_language: str, detected_language):
+    """异常时切到哪个语种重试（只做一遍以控制耗时）。
+
+    已知主坑：auto 把中文误判成 en，导致整集塌缩 1 句。
+    因此 auto 下若检测语种不是 zh，则优先强制 zh；其余情形切到相反语种。
+    """
+    if source_language == "auto":
+        return "zh" if (detected_language or "en") != "zh" else "en"
+    if source_language in ("en", "zh_en"):
+        return "zh"
+    if source_language == "zh":
+        return "en"
+    if source_language == "fr":
+        return "en"
+    return None
+
+
+def _quality_score(metrics: dict, sentence_count: int) -> float:
+    """主/重试结果间择优用的分数，越高越好。"""
+    cov = metrics.get("coverage") or 0.0
+    lp = metrics.get("mean_logprob") or -5.0
+    penalty = 0.0
+    if metrics.get("max_no_speech", 0.0) > ANOMALY_MAX_NO_SPEECH:
+        penalty += 1000.0
+    if metrics.get("max_compression", 0.0) > ANOMALY_MAX_COMPRESSION:
+        penalty += 1000.0
+    return sentence_count * 10.0 + cov * 100.0 + max(0.0, lp + 1.5) * 50.0 - penalty
+
+
+# --------------------------------------------------------------------------
+# P0-2：auto 模式下多锚点语种预检
+# --------------------------------------------------------------------------
+
+def _detect_language_at(model, audio: "np.ndarray", start_sec: float):
+    """在音频 start_sec 处取 30s 片段，返回 (语种码, 置信度)。
+
+    直接复用 whisper 内部的检测配方（log_mel_spectrogram → pad_or_trim →
+    detect_language），避免把整段音频喂进去白跑 encoder。
+    """
+    import torch
+    import whisper
+    from whisper.audio import N_FRAMES, N_SAMPLES
+
+    sr = SAMPLE_RATE
+    start = int(start_sec * sr)
+    end = min(len(audio), start + 30 * sr)
+    if end - start < int(1.0 * sr):
+        return ("en", 0.0)
+    segment = audio[start:end]
+    try:
+        mel = whisper.log_mel_spectrogram(segment, model.dims.n_mels, padding=N_SAMPLES)
+        mel_segment = whisper.pad_or_trim(mel, N_FRAMES).to(model.device).to(torch.float32)
+        _, probs = model.detect_language(mel_segment)
+        language = max(probs, key=probs.get)
+        return (language, float(probs[language]))
+    except Exception as exc:  # noqa: BLE001
+        print(f"[whisper] detect_language 预检失败（{exc}），回退 auto")
+        return ("en", 0.0)
+
+
+def _auto_detect_anchors(model, audio: "np.ndarray"):
+    """auto 模式下在 头/中/尾 采样做语种预检，返回 [(语种, 置信度), ...]。"""
+    total_sec = len(audio) / SAMPLE_RATE
+    positions = [0.0]
+    if total_sec > 60:
+        positions.append(total_sec * 0.5)
+    if total_sec > 120:
+        positions.append(max(0.0, total_sec - 30))
+    return [_detect_language_at(model, audio, p) for p in positions]
+
+
+def _select_language_from_anchors(anchors, zh_min_prob=None, other_min_prob=None):
+    """多锚点投票决定 auto 的强制语种（P1，泛化自 P0-2 的中文预检）。
+
+    中文优先（已知误判重灾区）：任一锚点中文置信度达标即强制 zh。
+    否则只在「fr/en 锚点」子集内投票：若该子集一致地指向同一语种且都高置信，
+    则强制该语种，覆盖 whisper 首 30s 的偶发误判。注意只统计 fr/en 锚点——
+    混入的低置信 zh/其他语种锚点（如中文标题、口误）不应阻断对明显 fr/en 播客的强制，
+    否则 P1 对「开头语种被误判」的播客反而会失效。其余情况回退 None（走 whisper 原生 auto）。
+    """
+    if zh_min_prob is None:
+        zh_min_prob = AUTO_ZH_MIN_PROB
+    if other_min_prob is None:
+        other_min_prob = AUTO_OTHER_MIN_PROB
+    if not anchors:
+        return None
+    if any(lang == "zh" and prob >= zh_min_prob for lang, prob in anchors):
+        return "zh"
+    # 仅 fr/en 锚点参与「一致强制」投票，避免杂锚点（中文标题/口误）阻断
+    fr_en = [(lang, prob) for lang, prob in anchors if lang in ("fr", "en")]
+    if not fr_en:
+        return None
+    langs = {lang for lang, _ in fr_en}
+    if len(langs) == 1:
+        lang = next(iter(langs))
+        if all(prob >= other_min_prob for _, prob in fr_en):
+            return lang
+    return None
+
+
+# --------------------------------------------------------------------------
 # 对外入口（与 podcast_asr.transcribe_audio 契约一致）
 # --------------------------------------------------------------------------
 
@@ -292,9 +504,15 @@ def transcribe_audio(
     asr=None,
     source_language: str = "auto",
     on_progress=None,
+    on_retry=None,
     **_ignored,
 ) -> list[dict]:
-    """返回 [{start, end, text}]，start/end 为秒。"""
+    """返回 [{start, end, text}]，start/end 为秒。
+
+    P0-3：转写完成后做异常短输出检测。若判定异常（整集塌缩成 1 句、整段被判静音、
+    置信度过低、重复循环），且存在可重试语种，则换语种重跑一遍；重试仍异常则抛错，
+    绝不让"看起来成功但只有 1 句"的结果入库。
+    """
     model = asr if asr is not None else get_model()
     audio = _load_audio_f32(path)
     ranges = _chunk_ranges(audio)
@@ -302,32 +520,85 @@ def transcribe_audio(
         raise podcast_asr.ASRError("音频解码后长度为 0")
 
     # 固定语种只跑一遍；auto + 双语裁决跑两遍，因此进度总量按遍数预分配
-    language = source_language if source_language in ("fr", "en") else None
+    # 选语种改造 P0-1：zh / zh_en 强制以中文解码（Whisper 无 zh_en，统一按 zh）；
+    # 其余（auto / fr / en）保持原行为
+    FORCED_WHISPER_LANG = {"fr": "fr", "en": "en", "zh": "zh", "zh_en": "zh"}
+    language = FORCED_WHISPER_LANG.get(source_language)
     passes = 2 if (language is None and BILINGUAL) else 1
+
+    # P0-2 + P1：auto 下多锚点预检，判定主语种后提前强制（中文优先，fr/en 全一致才强制），
+    # 省去 P0-3 的 2x 重试开销；P0-3 仍作兜底。
+    if language is None and WHISPER_AUTO_ZH_FALLBACK:
+        anchors = _auto_detect_anchors(model, audio)
+        forced = _select_language_from_anchors(anchors, zh_min_prob=AUTO_ZH_MIN_PROB)
+        if forced:
+            print(f"[whisper] auto 多锚点预检判定为 {forced}（{anchors}），强制转写")
+            language = forced
+            passes = 1
+
     total_units = max(1, len(ranges) * passes)
     units = 0
 
-    def run(forced_language) -> list[dict]:
+    def run(forced_language, report: bool = True):
         nonlocal units
         words: list[tuple[float, float, str]] = []
+        metrics_list: list[dict] = []
         for start_sample, end_sample in ranges:
             offset = start_sample / SAMPLE_RATE
-            words.extend(
-                _transcribe_chunk(model, audio[start_sample:end_sample], forced_language, offset)
+            chunk_words, chunk_metrics = _transcribe_chunk(
+                model, audio[start_sample:end_sample], forced_language, offset
             )
+            words.extend(chunk_words)
+            metrics_list.append(chunk_metrics)
             units += 1
-            if on_progress:
+            if report and on_progress:
                 on_progress(units, total_units)
-        return _split_to_sentences(words)
+        return _split_to_sentences(words), _aggregate_metrics(
+            metrics_list, audio_duration=len(audio) / SAMPLE_RATE
+        )
 
-    rows = run(language)
+    rows, metrics = run(language)
 
     if language is None and BILINGUAL and rows:
         sample = " ".join(row["text"] for row in rows[:30])
         other = "en" if podcast_asr.detect_text_language(sample) == "fr" else "fr"
-        rows = _arbitrate(rows, run(other))
+        alt_rows, _ = run(other)
+        rows = _arbitrate(rows, alt_rows)
 
     rows = _dedupe_repeats(rows)
     if not rows:
         raise podcast_asr.ASRError("Whisper 未产出任何文本段（音频可能全为静音）")
+
+    # ── P0-3：异常短输出检测 + 条件重试 ──
+    audio_total_sec = len(audio) / SAMPLE_RATE
+    anomalous, reasons = assess_quality(metrics, len(rows), audio_total_sec)
+    if anomalous:
+        if ANOMALY_RETRY_ENABLED:
+            recovery = _recovery_language(source_language, metrics.get("language"))
+            if recovery and recovery != language:
+                if on_retry:
+                    on_retry(recovery)
+                rec_rows, rec_metrics = run(recovery, report=False)
+                rec_rows = _dedupe_repeats(rec_rows)
+                rec_anom, rec_reasons = assess_quality(
+                    rec_metrics, len(rec_rows), audio_total_sec
+                )
+                print(
+                    f"[whisper] 重试({recovery})：{len(rec_rows)} 行，"
+                    f"异常={rec_anom}（{rec_reasons}）"
+                )
+                if not rec_anom:
+                    rows = rec_rows
+                elif _quality_score(rec_metrics, len(rec_rows)) > _quality_score(metrics, len(rows)):
+                    rows = rec_rows
+                else:
+                    raise podcast_asr.ASRError(
+                        f"转写质量异常且重试未改善：主因 {reasons}；"
+                        f"重试({recovery}) {rec_reasons}"
+                    )
+            else:
+                raise podcast_asr.ASRError(f"转写质量异常且无可重试语种：{reasons}")
+        else:
+            raise podcast_asr.ASRError(f"转写质量异常：{reasons}")
+
     return rows

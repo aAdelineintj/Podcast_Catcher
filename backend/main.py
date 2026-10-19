@@ -339,7 +339,11 @@ def process_job(job_id: str, input_path: str, source_language: str = "auto"):
                 write_result_file(job_id, segments)
                 flushed = done_count
 
-        pipeline.translate_segments(segments, on_progress=on_translate_progress)
+        pipeline.translate_segments(
+            segments,
+            on_progress=on_translate_progress,
+            target_lang=pipeline.baidu_target_for_source(source_language),
+        )
 
         result_path = write_result_file(job_id, segments)
 

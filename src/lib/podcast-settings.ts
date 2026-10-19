@@ -17,7 +17,7 @@ const STORAGE_VERSION = 2;
  */
 export const DEFAULT_SOURCE_LANGUAGE: SourceLanguage = "auto";
 
-const VALID_LANGUAGES: readonly SourceLanguage[] = ["fr", "en", "auto"];
+const VALID_LANGUAGES: readonly SourceLanguage[] = ["fr", "en", "auto", "zh", "zh_en"];
 
 export function loadSourceLanguage(): SourceLanguage {
   if (typeof window === "undefined") {
