@@ -25,8 +25,13 @@ type ImportLinkBody = { url?: unknown };
 
 const APPLE_HOST = "podcasts.apple.com";
 
-/** 匹配 Apple 播客链接里的地区码（可选）和播客数字 ID。 */
-const APPLE_LINK_RE = /podcasts\.apple\.com\/(?:([a-z]{2})\/)?podcast\/[^/]*\/id(\d+)/i;
+/** 匹配 Apple 播客链接里的地区码（可选）和播客数字 ID。
+ *
+ * slug 段（`podcast/<slug>/id...`）必须是**可选**的：Apple「拷贝链接」经常给
+ * `podcasts.apple.com/us/podcast/id123`（无 slug）这种合法格式，旧正则要求
+ * slug 存在，会把这类链接直接判成「识别不到 ID」——表现为用户点导入即失败。
+ */
+const APPLE_LINK_RE = /podcasts\.apple\.com\/(?:([a-z]{2})\/)?podcast\/(?:[^/]+\/)?id(\d+)/i;
 
 /** 浏览器化的 UA：部分播主 CDN 会拦默认 fetch UA，带一个能降低被拦概率。 */
 const BROWSER_UA =

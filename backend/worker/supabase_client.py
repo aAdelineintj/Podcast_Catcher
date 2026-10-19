@@ -21,6 +21,15 @@ import requests
 
 from . import config
 
+# 全局 Session：显式关闭环境代理。
+# 本机（含 WorkBuddy 沙箱）会注入 HTTP_PROXY/HTTPS_PROXY=127.0.0.1:xxxxx，
+# 一旦该代理进程退出，所有 Supabase 请求就会 Failed to resolve / 连接重置，
+# worker 直接卡死在心跳/认领循环里。Supabase 是公网标准 TLS，不需要代理，
+# 因此固定 trust_env=False + proxies 置空，不受启动环境变量影响。
+_session = requests.Session()
+_session.trust_env = False
+_session.proxies = {"http": None, "https": None}
+
 
 class SupabaseError(RuntimeError):
     """带上响应体的错误，便于直接看出 PostgREST 到底嫌哪里不对。"""
@@ -73,7 +82,7 @@ class SupabaseClient:
         return headers
 
     def _request(self, method: str, path: str, **kwargs) -> requests.Response:
-        response = requests.request(
+        response = _session.request(
             method,
             f"{self.url}{path}",
             timeout=self.timeout,

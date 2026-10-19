@@ -26,6 +26,7 @@ const stageTextMap: Record<string, string> = {
   uploaded: "上传完成",
   queued: "任务排队中",
   transcribing: "正在转写原文",
+  retrying: "正在重试（换语种）",
   transcribed: "转写完成，准备翻译",
   translating: "正在逐句翻译",
   completed: "处理完成",

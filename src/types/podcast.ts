@@ -1,6 +1,6 @@
 "use client";
 
-export type SourceLanguage = "fr" | "en" | "auto";
+export type SourceLanguage = "fr" | "en" | "auto" | "zh" | "zh_en";
 
 export type TranscriptSegment = {
   start: string;
